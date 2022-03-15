@@ -114,6 +114,7 @@ static DEFINE_PER_CPU(struct sev_es_runtime_data*, runtime_data);
 DEFINE_STATIC_KEY_FALSE(sev_es_enable_key);
 
 static DEFINE_PER_CPU(struct sev_es_save_area *, sev_vmsa);
+static DEFINE_PER_CPU(struct svsm_caa *, svsm_caa);
 
 struct sev_config {
 	__u64 debug		: 1,
@@ -1349,6 +1350,17 @@ static void __init alloc_runtime_data(int cpu)
 	if (!data)
 		panic("Can't allocate SEV-ES runtime data");
 
+	if (svsm_vmpl) {
+		struct svsm_caa *caa;
+
+		/* Allocate the SVSM CAA page if an SVSM is present */
+		caa = memblock_alloc(sizeof(*caa), PAGE_SIZE);
+		if (!caa)
+			panic("Can't allocate SVSM CAA page\n");
+
+		per_cpu(svsm_caa, cpu) = caa;
+	}
+
 	per_cpu(runtime_data, cpu) = data;
 }
 
@@ -1400,6 +1412,33 @@ void __init sev_es_init_vc_handling(void)
 	for_each_possible_cpu(cpu) {
 		alloc_runtime_data(cpu);
 		init_ghcb(cpu);
+	}
+
+	if (svsm_caa_gpa) {
+		struct svsm_caa *caa, *new_caa;
+		unsigned long flags;
+		int ret;
+
+		caa = early_memremap(svsm_caa_gpa, PAGE_SIZE);
+		new_caa = this_cpu_read(svsm_caa);
+
+		local_irq_save(flags);
+
+		/*
+		 * SVSM_CORE_REMAP_CA call:
+		 *   RAX = 0 (Protocol=0, CallID=0)
+		 *   RCX = New CAA GPA
+		 *   RDX = 0
+		 */
+		ret = __svsm_msr_protocol(caa, 0, __pa(new_caa), 0, 0, 0);
+		if (ret)
+			panic("Can't remap the SVSM CAA page, ret=%d\n", ret);
+
+		local_irq_restore(flags);
+
+		/* Switch to using the per-CPU CAA */
+		svsm_caa_gpa = 0;
+		early_memunmap(caa, PAGE_SIZE);
 	}
 
 	sev_es_setup_play_dead();

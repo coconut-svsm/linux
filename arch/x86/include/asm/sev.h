@@ -61,6 +61,17 @@ struct cc_blob_sev_info {
 	u32 rsvd2;
 } __packed;
 
+/*
+ * The SVSM CAA related structures.
+ */
+struct svsm_caa {
+	u8 call_pending;
+	u8 mem_available;
+	u8 rsvd1[6];
+
+	u8 svsm_buffer[PAGE_SIZE - 8];
+};
+
 void do_vc_no_ghcb(struct pt_regs *regs, unsigned long exit_code);
 
 static inline u64 lower_bits(u64 val, unsigned int bits)

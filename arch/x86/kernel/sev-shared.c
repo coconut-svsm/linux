@@ -79,6 +79,42 @@ static u32 cpuid_ext_range_max __ro_after_init;
 static u8 svsm_vmpl __ro_after_init;
 static u64 svsm_caa_gpa __ro_after_init;
 
+static int __svsm_msr_protocol(struct svsm_caa *caa, u64 rax, u64 rcx, u64 rdx, u64 r8, u64 r9)
+{
+	u64 val, resp;
+	u8 pending;
+	int ret;
+
+	val = sev_es_rd_ghcb_msr();
+
+	sev_es_wr_ghcb_msr(GHCB_MSR_VMPL_REQ_LEVEL(0));
+
+	asm volatile("mov %4, %%r8\n\t"
+		     "mov %5, %%r9\n\t"
+		     "movb $1, %6\n\t"
+		     "rep; vmmcall\n\t"
+		     : "=a" (ret)
+		     : "a" (rax), "c" (rcx), "d" (rdx), "r" (r8), "r" (r9), "m" (caa->call_pending)
+		     : "r8", "r9");
+
+	resp = sev_es_rd_ghcb_msr();
+
+	sev_es_wr_ghcb_msr(val);
+
+	pending = 0;
+	asm volatile("xchgb %0, %1" : "+r" (pending) : "m" (caa->call_pending) : "memory");
+	if (pending)
+		ret = -EINVAL;
+
+	if (GHCB_RESP_CODE(resp) != GHCB_MSR_VMPL_RESP)
+		ret = -EINVAL;
+
+	if (GHCB_MSR_VMPL_RESP_VAL(resp) != 0)
+		ret = -EINVAL;
+
+	return ret;
+}
+
 static bool __init sev_es_check_cpu_features(void)
 {
 	if (!has_cpuflag(X86_FEATURE_RDRAND)) {
