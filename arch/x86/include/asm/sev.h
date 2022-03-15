@@ -117,7 +117,7 @@ struct secrets_os_area {
 
 #define VMPCK_KEY_LEN		32
 
-/* See the SNP spec version 0.9 for secrets page format */
+/* See the SNP spec version 1.51 for secrets page format */
 struct snp_secrets_page_layout {
 	u32 version;
 	u32 imien	: 1,
@@ -130,7 +130,19 @@ struct snp_secrets_page_layout {
 	u8 vmpck2[VMPCK_KEY_LEN];
 	u8 vmpck3[VMPCK_KEY_LEN];
 	struct secrets_os_area os_area;
-	u8 rsvd3[3840];
+
+	u8 vmsa_tweak_bitmap[64];
+
+	/* SVSM fields */
+	u64 svsm_base;
+	u64 svsm_size;
+	u64 svsm_caa;
+	u32 svsm_max_version;
+	u8 svsm_guest_vmpl;
+	u8 rsvd3[3];
+
+	/* Remainder of page */
+	u8 rsvd4[3744];
 } __packed;
 
 #ifdef CONFIG_AMD_MEM_ENCRYPT

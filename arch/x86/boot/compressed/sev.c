@@ -484,6 +484,13 @@ bool snp_init(struct boot_params *bp)
 	setup_cpuid_table(cc_info);
 
 	/*
+	 * Record the address of the SVSM CAA if the guest is not running
+	 * at VMPL0. The CAA will be used to communicate with the SVSM to
+	 * perform the SVSM services.
+	 */
+	setup_svsm_caa(cc_info);
+
+	/*
 	 * Pass run-time kernel a pointer to CC info via boot_params so EFI
 	 * config table doesn't need to be searched again during early startup
 	 * phase.

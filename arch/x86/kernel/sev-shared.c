@@ -76,6 +76,9 @@ static u32 cpuid_std_range_max __ro_after_init;
 static u32 cpuid_hyp_range_max __ro_after_init;
 static u32 cpuid_ext_range_max __ro_after_init;
 
+static u8 svsm_vmpl __ro_after_init;
+static u64 svsm_caa_gpa __ro_after_init;
+
 static bool __init sev_es_check_cpu_features(void)
 {
 	if (!has_cpuflag(X86_FEATURE_RDRAND)) {
@@ -990,4 +993,28 @@ static void __init setup_cpuid_table(const struct cc_blob_sev_info *cc_info)
 		else if (fn->eax_in == 0x80000000)
 			cpuid_ext_range_max = fn->eax;
 	}
+}
+
+/*
+ * Maintain the GPA of the SVSM CAA in order to utilize the SVSM services
+ * needed when not runnuing in VMPL0.
+ */
+static void __init setup_svsm_caa(const struct cc_blob_sev_info *cc_info)
+{
+	struct snp_secrets_page_layout *secrets_page;
+
+	BUILD_BUG_ON(sizeof(*secrets_page) != PAGE_SIZE);
+
+	if (!cc_info || !cc_info->secrets_phys || cc_info->secrets_len != PAGE_SIZE)
+		sev_es_terminate(SEV_TERM_SET_LINUX, GHCB_TERM_SECRETS_PAGE);
+
+	secrets_page = (struct snp_secrets_page_layout *)cc_info->secrets_phys;
+	if (!secrets_page->svsm_size)
+		return;
+
+	if (!secrets_page->svsm_guest_vmpl)
+		sev_es_terminate(SEV_TERM_SET_LINUX, GHCB_TERM_SVSM_VMPL0);
+
+	svsm_vmpl = secrets_page->svsm_guest_vmpl;
+	svsm_caa_gpa = secrets_page->svsm_caa;
 }
