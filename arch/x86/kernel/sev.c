@@ -644,7 +644,7 @@ static u64 __init get_jump_table_addr(void)
 	return ret;
 }
 
-static void pvalidate_pages(unsigned long vaddr, unsigned int npages, bool validate)
+static void __base_pvalidate_pages(unsigned long vaddr, unsigned int npages, bool validate)
 {
 	unsigned long vaddr_end;
 	int rc;
@@ -659,6 +659,117 @@ static void pvalidate_pages(unsigned long vaddr, unsigned int npages, bool valid
 
 		vaddr = vaddr + PAGE_SIZE;
 	}
+}
+
+static void __svsm_pvalidate_pages(struct svsm_caa *caa, unsigned long caa_gpa,
+				   unsigned long paddr, unsigned int npages, bool validate)
+{
+	struct svsm_pvalidate_call *svsm_call;
+	unsigned long svsm_call_gpa;
+	unsigned long pa, pa_end;
+	unsigned int i, limit;
+	unsigned long flags;
+	u64 function;
+	int ret;
+
+	/*
+	 * This can be called very early in the boot, use native functions in
+	 * order to avoid paravirt issues.
+	 */
+	flags = native_save_fl();
+	if (flags & X86_EFLAGS_IF)
+		native_irq_disable();
+
+	svsm_call     = (struct svsm_pvalidate_call *)caa->svsm_buffer;
+	svsm_call_gpa = caa_gpa + offsetof(struct svsm_caa, svsm_buffer);
+
+	memset(caa->svsm_buffer, 0, sizeof(caa->svsm_buffer));
+
+	limit  = sizeof(caa->svsm_buffer) - sizeof(*svsm_call);
+	limit /= sizeof(svsm_call->entry[0]);
+	limit--;
+
+	/* Protocol 0, Call ID 1 */
+	function = 1;
+
+	i = 0;
+	svsm_call->entries = 0;
+	svsm_call->next    = 0;
+
+	pa = paddr & PAGE_MASK;
+	pa_end = pa + (npages << PAGE_SHIFT);
+	while (pa < pa_end) {
+		svsm_call->entries++;
+		svsm_call->entry[i].page_size = RMP_PG_SIZE_4K;
+		svsm_call->entry[i].action    = validate;
+		svsm_call->entry[i].ignore_cf = 0;
+		svsm_call->entry[i].pfn       = pa >> PAGE_SHIFT;
+
+		i++;
+		if (i > limit) {
+			ret = __svsm_msr_protocol(caa, function, svsm_call_gpa, 0, 0, 0);
+			if (ret)
+				sev_es_terminate(SEV_TERM_SET_LINUX, GHCB_TERM_PVALIDATE);
+
+			memset(caa->svsm_buffer, 0, sizeof(caa->svsm_buffer));
+			i = 0;
+		}
+
+		pa += PAGE_SIZE;
+	}
+
+	if (i > 0) {
+		ret = __svsm_msr_protocol(caa, function, svsm_call_gpa, 0, 0, 0);
+		if (ret)
+			sev_es_terminate(SEV_TERM_SET_LINUX, GHCB_TERM_PVALIDATE);
+	}
+
+	if (flags & X86_EFLAGS_IF)
+		native_irq_enable();
+}
+
+static void base_pvalidate_pages(unsigned long vaddr, unsigned int npages, bool validate)
+{
+	__base_pvalidate_pages(vaddr, npages, validate);
+}
+
+static void svsm_pvalidate_pages(unsigned long paddr, unsigned int npages, bool validate)
+{
+	struct svsm_caa *caa;
+
+	caa = this_cpu_read(svsm_caa);
+
+	__svsm_pvalidate_pages(caa, __pa(caa), paddr, npages, validate);
+}
+
+static void pvalidate_pages(unsigned long vaddr, unsigned long paddr, unsigned int npages, bool validate)
+{
+	svsm_vmpl ? svsm_pvalidate_pages(paddr, npages, validate)
+		  : base_pvalidate_pages(vaddr, npages, validate);
+}
+
+static void __init early_base_pvalidate_pages(unsigned long vaddr, unsigned int npages, bool validate)
+{
+	__base_pvalidate_pages(vaddr, npages, validate);
+}
+
+static void __init early_svsm_pvalidate_pages(unsigned long vaddr, unsigned long paddr, unsigned int npages, bool validate)
+{
+	struct svsm_caa *caa;
+
+	caa = (vaddr == paddr) ? (struct svsm_caa *)svsm_caa_gpa
+			       : early_memremap(svsm_caa_gpa, PAGE_SIZE);
+
+	__svsm_pvalidate_pages(caa, svsm_caa_gpa, paddr, npages, validate);
+
+	if (vaddr != paddr)
+		early_memunmap(caa, PAGE_SIZE);
+}
+
+static void __init early_pvalidate_pages(unsigned long vaddr, unsigned long paddr, unsigned int npages, bool validate)
+{
+	svsm_vmpl ? early_svsm_pvalidate_pages(vaddr, paddr, npages, validate)
+		  : early_base_pvalidate_pages(vaddr, npages, validate);
 }
 
 static void __init early_set_pages_state(unsigned long paddr, unsigned int npages, enum psc_op op)
@@ -718,7 +829,7 @@ void __init early_snp_set_memory_private(unsigned long vaddr, unsigned long padd
 	early_set_pages_state(paddr, npages, SNP_PAGE_STATE_PRIVATE);
 
 	/* Validate the memory pages after they've been added in the RMP table. */
-	pvalidate_pages(vaddr, npages, true);
+	early_pvalidate_pages(vaddr, paddr, npages, true);
 }
 
 void __init early_snp_set_memory_shared(unsigned long vaddr, unsigned long paddr,
@@ -734,7 +845,7 @@ void __init early_snp_set_memory_shared(unsigned long vaddr, unsigned long paddr
 		return;
 
 	/* Invalidate the memory pages before they are marked shared in the RMP table. */
-	pvalidate_pages(vaddr, npages, false);
+	early_pvalidate_pages(vaddr, paddr, npages, false);
 
 	 /* Ask hypervisor to mark the memory pages shared in the RMP table. */
 	early_set_pages_state(paddr, npages, SNP_PAGE_STATE_SHARED);
@@ -908,7 +1019,7 @@ void snp_set_memory_shared(unsigned long vaddr, unsigned int npages)
 	if (!cc_platform_has(CC_ATTR_GUEST_SEV_SNP))
 		return;
 
-	pvalidate_pages(vaddr, npages, false);
+	pvalidate_pages(vaddr, __pa(vaddr), npages, false);
 
 	set_pages_state(vaddr, npages, SNP_PAGE_STATE_SHARED);
 }
@@ -920,7 +1031,7 @@ void snp_set_memory_private(unsigned long vaddr, unsigned int npages)
 
 	set_pages_state(vaddr, npages, SNP_PAGE_STATE_PRIVATE);
 
-	pvalidate_pages(vaddr, npages, true);
+	pvalidate_pages(vaddr, __pa(vaddr), npages, true);
 }
 
 static int snp_set_vmsa(void *va, bool vmsa)
