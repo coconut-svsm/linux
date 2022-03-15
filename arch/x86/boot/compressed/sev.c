@@ -117,6 +117,39 @@ static enum es_result vc_read_mem(struct es_em_ctxt *ctxt,
 /* Include code for early handlers */
 #include "../../kernel/sev-shared.c"
 
+static int svsm_pvalidate(unsigned long paddr, bool rmp_psize, bool validate)
+{
+	struct svsm_pvalidate_call *svsm_call;
+	struct svsm_caa *svsm_caa;
+	u64 function;
+
+	svsm_caa = (struct svsm_caa *)svsm_caa_gpa;
+	svsm_call = (struct svsm_pvalidate_call *)svsm_caa->svsm_buffer;
+
+	/* Protocol 0, Call ID 1 */
+	function = 1;
+
+	svsm_call->entries = 1;
+	svsm_call->next    = 0;
+	svsm_call->entry[0].page_size = rmp_psize;
+	svsm_call->entry[0].action    = validate;
+	svsm_call->entry[0].ignore_cf = 0;
+	svsm_call->entry[0].pfn       = paddr >> PAGE_SHIFT;
+
+	return __svsm_msr_protocol(svsm_caa, function, __pa(svsm_call), 0, 0, 0);
+}
+
+static int base_pvalidate(unsigned long paddr, bool rmp_psize, bool validate)
+{
+	return pvalidate(paddr, rmp_psize, validate);
+}
+
+static int pvalidate_page(unsigned long paddr, bool rmp_psize, bool validate)
+{
+	return svsm_vmpl ? svsm_pvalidate(paddr, rmp_psize, validate)
+			 : base_pvalidate(paddr, rmp_psize, validate);
+}
+
 static inline bool sev_snp_enabled(void)
 {
 	return sev_status & MSR_AMD64_SEV_SNP_ENABLED;
@@ -133,7 +166,7 @@ static void __page_state_change(unsigned long paddr, enum psc_op op)
 	 * If private -> shared then invalidate the page before requesting the
 	 * state change in the RMP table.
 	 */
-	if (op == SNP_PAGE_STATE_SHARED && pvalidate(paddr, RMP_PG_SIZE_4K, 0))
+	if (op == SNP_PAGE_STATE_SHARED && pvalidate_page(paddr, RMP_PG_SIZE_4K, 0))
 		sev_es_terminate(SEV_TERM_SET_LINUX, GHCB_TERM_PVALIDATE);
 
 	/* Issue VMGEXIT to change the page state in RMP table. */
@@ -149,7 +182,7 @@ static void __page_state_change(unsigned long paddr, enum psc_op op)
 	 * Now that page state is changed in the RMP table, validate it so that it is
 	 * consistent with the RMP entry.
 	 */
-	if (op == SNP_PAGE_STATE_PRIVATE && pvalidate(paddr, RMP_PG_SIZE_4K, 1))
+	if (op == SNP_PAGE_STATE_PRIVATE && pvalidate_page(paddr, RMP_PG_SIZE_4K, 1))
 		sev_es_terminate(SEV_TERM_SET_LINUX, GHCB_TERM_PVALIDATE);
 }
 
