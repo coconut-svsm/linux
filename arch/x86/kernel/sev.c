@@ -1034,7 +1034,7 @@ void snp_set_memory_private(unsigned long vaddr, unsigned int npages)
 	pvalidate_pages(vaddr, __pa(vaddr), npages, true);
 }
 
-static int snp_set_vmsa(void *va, bool vmsa)
+static int base_snp_set_vmsa(void *vmsa, void *caa, int apic_id, bool set_vmsa)
 {
 	u64 attrs;
 
@@ -1046,10 +1046,39 @@ static int snp_set_vmsa(void *va, bool vmsa)
 	 * instruction in the AMD64 APM Volume 3).
 	 */
 	attrs = 1;
-	if (vmsa)
+	if (set_vmsa)
 		attrs |= RMPADJUST_VMSA_PAGE_BIT;
 
-	return rmpadjust((unsigned long)va, RMP_PG_SIZE_4K, attrs);
+	return rmpadjust((unsigned long)vmsa, RMP_PG_SIZE_4K, attrs);
+}
+
+static int svsm_snp_set_vmsa(void *vmsa, void *caa, int apic_id, bool set_vmsa)
+{
+	struct svsm_caa *this_caa;
+	unsigned long flags;
+	int ret;
+
+	local_irq_save(flags);
+
+	this_caa = this_cpu_read(svsm_caa);
+
+	if (set_vmsa) {
+		/* Protocol 0, Call ID 2 */
+		ret = __svsm_msr_protocol(this_caa, 2, __pa(vmsa), __pa(caa), apic_id, 0);
+	} else {
+		/* Protocol 0, Call ID 3 */
+		ret = __svsm_msr_protocol(this_caa, 3, __pa(vmsa), 0, 0, 0);
+	}
+
+	local_irq_restore(flags);
+
+	return ret;
+}
+
+static int snp_set_vmsa(void *vmsa, void *caa, int apic_id, bool set_vmsa)
+{
+	return svsm_vmpl ? svsm_snp_set_vmsa(vmsa, caa, apic_id, set_vmsa)
+			 : base_snp_set_vmsa(vmsa, caa, apic_id, set_vmsa);
 }
 
 #define __ATTR_BASE		(SVM_SELECTOR_P_MASK | SVM_SELECTOR_S_MASK)
@@ -1083,11 +1112,11 @@ static void *snp_alloc_vmsa_page(void)
 	return page_address(p + 1);
 }
 
-static void snp_cleanup_vmsa(struct sev_es_save_area *vmsa)
+static void snp_cleanup_vmsa(struct sev_es_save_area *vmsa, int apic_id)
 {
 	int err;
 
-	err = snp_set_vmsa(vmsa, false);
+	err = snp_set_vmsa(vmsa, NULL, apic_id, false);
 	if (err)
 		pr_err("clear VMSA page failed (%u), leaking page\n", err);
 	else
@@ -1098,6 +1127,7 @@ static int wakeup_cpu_via_vmgexit(int apic_id, unsigned long start_ip)
 {
 	struct sev_es_save_area *cur_vmsa, *vmsa;
 	struct ghcb_state state;
+	struct svsm_caa *caa;
 	unsigned long flags;
 	struct ghcb *ghcb;
 	u8 sipi_vector;
@@ -1143,6 +1173,12 @@ static int wakeup_cpu_via_vmgexit(int apic_id, unsigned long start_ip)
 	vmsa = (struct sev_es_save_area *)snp_alloc_vmsa_page();
 	if (!vmsa)
 		return -ENOMEM;
+
+	/*
+	 * If an SVSM is present, then the SVSM CAA per-CPU variable will
+	 * have a value, otherwise it will be NULL.
+	 */
+	caa = per_cpu(svsm_caa, cpu);
 
 	/* CR4 should maintain the MCE value */
 	cr4 = native_read_cr4() & X86_CR4_MCE;
@@ -1191,11 +1227,11 @@ static int wakeup_cpu_via_vmgexit(int apic_id, unsigned long start_ip)
 	 *   VMPL level
 	 *   SEV_FEATURES (matches the SEV STATUS MSR right shifted 2 bits)
 	 */
-	vmsa->vmpl		= 0;
+	vmsa->vmpl		= svsm_vmpl;
 	vmsa->sev_features	= sev_status >> 2;
 
 	/* Switch the page over to a VMSA page now that it is initialized */
-	ret = snp_set_vmsa(vmsa, true);
+	ret = snp_set_vmsa(vmsa, caa, apic_id, true);
 	if (ret) {
 		pr_err("set VMSA page failed (%u)\n", ret);
 		free_page((unsigned long)vmsa);
@@ -1211,7 +1247,10 @@ static int wakeup_cpu_via_vmgexit(int apic_id, unsigned long start_ip)
 	vc_ghcb_invalidate(ghcb);
 	ghcb_set_rax(ghcb, vmsa->sev_features);
 	ghcb_set_sw_exit_code(ghcb, SVM_VMGEXIT_AP_CREATION);
-	ghcb_set_sw_exit_info_1(ghcb, ((u64)apic_id << 32) | SVM_VMGEXIT_AP_CREATE);
+	ghcb_set_sw_exit_info_1(ghcb,
+				((u64)apic_id << 32)	|
+				((u64)svsm_vmpl << 16)	|
+				SVM_VMGEXIT_AP_CREATE);
 	ghcb_set_sw_exit_info_2(ghcb, __pa(vmsa));
 
 	sev_es_wr_ghcb_msr(__pa(ghcb));
@@ -1229,13 +1268,13 @@ static int wakeup_cpu_via_vmgexit(int apic_id, unsigned long start_ip)
 
 	/* Perform cleanup if there was an error */
 	if (ret) {
-		snp_cleanup_vmsa(vmsa);
+		snp_cleanup_vmsa(vmsa, apic_id);
 		vmsa = NULL;
 	}
 
 	/* Free up any previous VMSA page */
 	if (cur_vmsa)
-		snp_cleanup_vmsa(cur_vmsa);
+		snp_cleanup_vmsa(cur_vmsa, apic_id);
 
 	/* Record the current VMSA page */
 	per_cpu(sev_vmsa, cpu) = vmsa;
