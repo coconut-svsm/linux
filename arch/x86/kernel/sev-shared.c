@@ -512,6 +512,10 @@ static int snp_cpuid_postprocess(struct cpuid_leaf *leaf)
 		/* node ID */
 		leaf->ecx = (leaf->ecx & GENMASK(31, 8)) | (leaf_hv.ecx & GENMASK(7, 0));
 		break;
+	case 0x8000001f:
+		if (svsm_vmpl)
+			leaf->eax |= BIT(28);
+		break;
 	default:
 		/* No fix-ups needed, use values as-is. */
 		break;
