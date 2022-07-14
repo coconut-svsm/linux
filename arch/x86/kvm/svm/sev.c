@@ -286,6 +286,7 @@ static void sev_unbind_asid(struct kvm *kvm, unsigned int handle)
 
 static int verify_snp_init_flags(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 	struct kvm_snp_init params;
 	int ret = 0;
 
@@ -295,6 +296,10 @@ static int verify_snp_init_flags(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (params.flags & ~SEV_SNP_SUPPORTED_FLAGS)
 		ret = -EOPNOTSUPP;
 
+	/* Save the supplied flags value */
+	sev->snp_init_flags = params.flags;
+
+	/* Return the supported flags value */
 	params.flags = SEV_SNP_SUPPORTED_FLAGS;
 
 	if (copy_to_user((void __user *)(uintptr_t)argp->data, &params, sizeof(params)))
@@ -351,6 +356,7 @@ e_no_asid:
 	sev->snp_active = false;
 	sev->es_active = false;
 	sev->active = false;
+	sev->snp_init_flags = 0;
 	return ret;
 }
 
@@ -2302,6 +2308,38 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 				      snp_launch_update_gfn_handler, argp);
 }
 
+static int __snp_launch_update_vmsa(struct vcpu_svm *svm,
+				    struct kvm_sev_info *sev,
+				    struct kvm_sev_cmd *argp)
+{
+	struct sev_data_snp_launch_update data = {};
+	u64 pfn = __pa(svm->sev_es.vmsa) >> PAGE_SHIFT;
+	int ret;
+
+	/* Perform some pre-encryption checks against the VMSA */
+	ret = sev_es_sync_vmsa(svm);
+	if (ret)
+		return ret;
+
+	/* Transition the VMSA page to a firmware state. */
+	ret = rmp_make_private(pfn, -1, PG_LEVEL_4K, sev->asid, true);
+	if (ret)
+		return ret;
+
+	/* Issue the SNP command to encrypt the VMSA */
+	data.gctx_paddr = __psp_pa(sev->snp_context);
+	data.page_type = SNP_PAGE_TYPE_VMSA;
+	data.address = __sme_pa(svm->sev_es.vmsa);
+	ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
+			      &data, &argp->error);
+	if (ret) {
+		snp_page_reclaim(pfn);
+		return ret;
+	}
+
+	return 0;
+}
+
 static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
@@ -2315,25 +2353,15 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		struct vcpu_svm *svm = to_svm(vcpu);
-		u64 pfn = __pa(svm->sev_es.vmsa) >> PAGE_SHIFT;
 
-		/* Perform some pre-encryption checks against the VMSA */
-		ret = sev_es_sync_vmsa(svm);
-		if (ret)
-			return ret;
-
-		/* Transition the VMSA page to a firmware state. */
-		ret = rmp_make_private(pfn, -1, PG_LEVEL_4K, sev->asid, true);
-		if (ret)
-			return ret;
-
-		/* Issue the SNP command to encrypt the VMSA */
-		data.address = __sme_pa(svm->sev_es.vmsa);
-		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
-				      &data, &argp->error);
-		if (ret) {
-			snp_page_reclaim(pfn);
-			return ret;
+		/*
+		 * If SVSM support is requested, only perform the LAUNCH_UPDATE
+		 * on the first vCPU, otherwise, perform it on all vCPUs.
+		 */
+		if (!(sev->snp_init_flags & KVM_SEV_SNP_SVSM) || !i) {
+			ret = __snp_launch_update_vmsa(svm, sev, argp);
+			if (ret)
+				return ret;
 		}
 
 		svm->vcpu.arch.guest_state_protected = true;
@@ -2359,7 +2387,7 @@ static int snp_launch_finish(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
 		return -EFAULT;
 
-	/* Measure all vCPUs using LAUNCH_UPDATE before finalizing the launch flow. */
+	/* Measure vCPUs using LAUNCH_UPDATE before finalizing the launch flow. */
 	ret = snp_launch_update_vmsa(kvm, argp);
 	if (ret)
 		return ret;

@@ -2027,11 +2027,14 @@ struct kvm_sev_receive_update_data {
 	__u32 trans_len;
 };
 
-/* enable the restricted injection */
-#define KVM_SEV_SNP_RESTRICTED_INJET   (1 << 0)
+/* Enable Restricted Injection support */
+#define KVM_SEV_SNP_RESTRICTED_INJET		(1 << 0)
 
-/* enable the restricted injection timer */
-#define KVM_SEV_SNP_RESTRICTED_TIMER_INJET   (1 << 1)
+/* Enable Restricted Injection Timer support */
+#define KVM_SEV_SNP_RESTRICTED_TIMER_INJET	(1 << 1)
+
+/* Enable SVSM support */
+#define KVM_SEV_SNP_SVSM			(1 << 2)
 
 struct kvm_snp_init {
 	__u64 flags;
