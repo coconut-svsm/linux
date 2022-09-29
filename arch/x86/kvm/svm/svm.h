@@ -355,6 +355,11 @@ static inline bool sev_snp_guest(struct kvm *kvm)
 	return sev_es_guest(kvm) && sev->snp_active;
 }
 
+static inline bool has_snp_feature(struct kvm_sev_info *sev, u64 flag)
+{
+	return sev->snp_init_flags & flag;
+}
+
 static inline bool ghcb_gpa_is_registered(struct vcpu_svm *svm, u64 val)
 {
 	return svm->sev_es.ghcb_registered_gpa[svm->sev_es.snp_current_vmpl] == val;
