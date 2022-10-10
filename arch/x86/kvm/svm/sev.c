@@ -828,9 +828,14 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	save->xss  = svm->vcpu.arch.ia32_xss;
 	save->dr6  = svm->vcpu.arch.dr6;
 
-	/* Enable the SEV-SNP feature */
-	if (sev_snp_guest(svm->vcpu.kvm))
+	/* Enable the SEV-SNP features */
+	if (sev_snp_guest(svm->vcpu.kvm)) {
 		save->sev_features |= SVM_SEV_FEAT_SNP_ACTIVE;
+
+		/* When launching with an SVSM, also set restricted injection */
+		if (has_snp_feature(sev, KVM_SEV_SNP_SVSM))
+			save->sev_features |= SVM_SEV_FEAT_RESTRICTED_INJECTION;
+	}
 
 	/*
 	 * Save the VMSA synced SEV features. For now, they are the same for
