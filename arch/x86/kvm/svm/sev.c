@@ -834,9 +834,9 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 
 	/*
 	 * Save the VMSA synced SEV features. For now, they are the same for
-	 * all vCPUs, so just save each time.
+	 * all vCPUs at the same VMPL, so just save each time.
 	 */
-	sev->sev_features = save->sev_features;
+	sev->sev_features[save->vmpl] = save->sev_features;
 
 	pr_debug("Virtual Machine Save Area (VMSA):\n");
 	print_hex_dump_debug("", DUMP_PREFIX_NONE, 16, 1, save, sizeof(*save), false);
@@ -3905,7 +3905,16 @@ static int sev_snp_ap_creation(struct vcpu_svm *svm)
 
 		/* Interrupt injection mode shouldn't change for AP creation */
 		sev_features = vcpu->arch.regs[VCPU_REGS_RAX];
-		sev_features ^= sev->sev_features;
+
+		/*
+		 * At least, the SNPActive feature must be set. If the SEV
+		 * features of this AP are zero, this is the first vCPU created at
+		 * this VMPL.
+		 */
+		if (!sev->sev_features[vmpl])
+			sev->sev_features[vmpl] = sev_features | SVM_SEV_FEAT_SNP_ACTIVE;
+
+		sev_features ^= sev->sev_features[vmpl];
 		if (sev_features & SVM_SEV_FEAT_INT_INJ_MODES) {
 			vcpu_unimpl(vcpu, "vmgexit: invalid AP injection mode [%#lx] from guest\n",
 				    vcpu->arch.regs[VCPU_REGS_RAX]);
