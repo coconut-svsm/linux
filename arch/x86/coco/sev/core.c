@@ -21,6 +21,7 @@
 #include <linux/cpumask.h>
 #include <linux/efi.h>
 #include <linux/platform_device.h>
+#include <linux/tpm_platform.h>
 #include <linux/io.h>
 #include <linux/psp-sev.h>
 #include <linux/dmi.h>
@@ -2510,6 +2511,50 @@ static struct platform_device sev_guest_device = {
 	.id		= -1,
 };
 
+static struct platform_device tpm_device = {
+	.name		= "tpm",
+	.id		= -1,
+};
+
+static int snp_issue_svsm_vtpm_send_command(u8 *buffer)
+{
+	struct svsm_call call = {};
+
+	call.caa = svsm_get_caa();
+	call.rax = (2ULL << 32) | 1;
+	call.rcx = __pa(buffer);
+
+	return svsm_perform_call_protocol(&call);
+}
+
+static bool is_svsm_vtpm_send_command_supported(void)
+{
+	struct svsm_call call = {};
+	u64 send_cmd_mask = 0;
+	u64 platform_cmds;
+	u64 features;
+	int ret;
+
+	call.caa = svsm_get_caa();
+	call.rax = 2ULL << 32;
+
+	ret = svsm_perform_call_protocol(&call);
+
+	if (ret != SVSM_SUCCESS)
+		return false;
+
+	features = call.rdx_out;
+	platform_cmds = call.rcx_out;
+
+	/* No feature supported, it must be zero */
+	if (features)
+		return false;
+
+	send_cmd_mask = 1 << 8;
+
+	return (platform_cmds & send_cmd_mask) == send_cmd_mask;
+}
+
 static int __init snp_init_platform_device(void)
 {
 	struct sev_guest_platform_data data;
@@ -2530,6 +2575,24 @@ static int __init snp_init_platform_device(void)
 		return -ENODEV;
 
 	pr_info("SNP guest platform device initialized.\n");
+
+	/*
+	 * The VTPM device is available only if we have a SVSM and
+	 * its VTPM supports the TPM_SEND_COMMAND platform command
+	 */
+
+	if (IS_ENABLED(CONFIG_TCG_PLATFORM) && snp_vmpl &&
+	    is_svsm_vtpm_send_command_supported()) {
+		struct tpm_platform_ops pops = {
+			.sendrcv = snp_issue_svsm_vtpm_send_command,
+		};
+
+		if (platform_device_add_data(&tpm_device, &pops, sizeof(pops)))
+			return -ENODEV;
+		if (platform_device_register(&tpm_device))
+			return -ENODEV;
+		pr_info("SNP SVSM VTPM platform device initialized\n");
+	}
 	return 0;
 }
 device_initcall(snp_init_platform_device);
