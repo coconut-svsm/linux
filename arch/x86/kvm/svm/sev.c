@@ -3737,20 +3737,6 @@ static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 	*pa = INVALID_PAGE;
 	svm->vmcb->control.vmsa_pa = INVALID_PAGE;
 
-	if (cur_pa != __pa(svm->sev_es.vmsa) && VALID_PAGE(cur_pa)) {
-		/*
-		 * The svm->sev_es.vmsa_pa field holds the hypervisor physical
-		 * address of the about to be replaced VMSA which will no longer
-		 * be used or referenced, so un-pin it. However, restricted
-		 * pages (e.g. via AP creation) should be left to the
-		 * restrictedmem backend to deal with, so don't release the
-		 * page in that case.
-		 */
-		if (!VALID_PAGE(gfn_to_pfn_restricted(vcpu->kvm,
-						      gpa_to_gfn(svm->sev_es.snp_vmsa[svm->sev_es.snp_target_vmpl].gpa))))
-			kvm_release_pfn_dirty(__phys_to_pfn(cur_pa));
-	}
-
 	if (VALID_PAGE(svm->sev_es.snp_vmsa[svm->sev_es.snp_target_vmpl].gpa)) {
 		/*
 		 * The VMSA is referenced by the hypervisor physical address,
