@@ -118,8 +118,33 @@ struct sirte_header {
 	struct meta_data mdata;
 };
 
+struct shared_irq_event {
+	u32 type;
+	union {
+		struct {
+			u8 dest_mode:1;
+			u8 trig_mode:1;
+			u8 delivery_mode:3;
+			u8 padding:3;
+			u8 vector;
+			u8 dest_id;
+			u8 rsvd[5];
+			u32 rsvd1;
+		} msi;
+		struct {
+			u32 pin;
+			u32 level;
+			u32 source_id;
+		} irqchip;
+	};
+} __aligned(16);
+
+#define NUM_IRQ_EVENTS					\
+	((PAGE_SIZE - sizeof(struct sirte_header)) /	\
+	sizeof(struct shared_irq_event))
 struct sirte_page {
 	struct sirte_header sirte_hdr;
+	struct shared_irq_event data[NUM_IRQ_EVENTS];
 } __aligned(4096);
 
 struct vcpu_tdx {
