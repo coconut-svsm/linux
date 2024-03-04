@@ -91,6 +91,25 @@ union tdx_exit_reason {
 	u64 full;
 };
 
+struct meta_data {
+	u32 num_elem;	/* number of elements */
+	u32 elem_size;	/* sizeof of elements */
+	u32 head;	/* offset from base, to read */
+	u32 tail;	/* offset from base, to write */
+	u32 size;	/* ele_num * ele_size */
+	u32 padding[3];
+};
+
+struct sirte_header {
+	u8 pir;		/* PIR from L1 used by host to inject irq event */
+	u8 rsvd[15];
+	struct meta_data mdata;
+};
+
+struct sirte_page {
+	struct sirte_header sirte_hdr;
+} __aligned(4096);
+
 struct vcpu_tdx {
 	struct kvm_vcpu	vcpu;
 
@@ -137,6 +156,10 @@ struct vcpu_tdx {
 	struct lbr_desc lbr_desc;
 
 	bool resume_l1;
+
+	/* Shared page to pass irq event to L1 */
+	struct page *pinned_page;
+	u8 shared_irte_pir;
 };
 
 static inline bool is_td(struct kvm *kvm)

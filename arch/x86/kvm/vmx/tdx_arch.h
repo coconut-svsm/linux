@@ -47,6 +47,9 @@
 
 #define TD_EXIT_OTHER_SMI_IS_MSMI	BIT(1)
 
+/* Not defined in GHCI */
+#define TDG_VP_VMCALL_SHARED_IRTE_HDR			0x20001
+
 /* TDX control structure (TDR/TDCS/TDVPS) field access codes */
 #define TDX_NON_ARCH			BIT_ULL(63)
 #define TDX_CLASS_SHIFT			56

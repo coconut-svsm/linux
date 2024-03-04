@@ -1569,6 +1569,72 @@ static int tdx_get_td_vm_call_info(struct kvm_vcpu *vcpu)
 	return 1;
 }
 
+static int tdx_handle_shared_irte_header(struct kvm_vcpu *vcpu)
+{
+	gfn_t gfn;
+	gpa_t gpa = tdvmcall_a0_read(vcpu);
+	struct page *page;
+	int npages_pinned;
+	unsigned long guest_addr;
+	void *shared_page_vaddr;
+	struct sirte_header sirte_hdr;
+	struct vcpu_tdx *tdx_vcpu = to_tdx(vcpu);
+
+	/* shared irte info already initialized, return success */
+	if (tdx_vcpu->pinned_page) {
+		tdvmcall_set_return_code(vcpu, TDVMCALL_SUCCESS);
+		return 1;
+	}
+
+	gfn = gpa_to_gfn(gpa) & ~kvm_gfn_shared_mask(vcpu->kvm);
+	if (!gfn) {
+		pr_err("%s: gpa to gfn failed! gfn 0x%llx gpa 0x%llx\n",
+		       __func__, gfn, gpa);
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+
+	if (kvm_mem_is_private(vcpu->kvm, gfn)) {
+		pr_err("%s: private gfn 0x%llx gpa 0x%llx\n", __func__, gfn,
+		       gpa);
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+
+	page = kzalloc(sizeof(*page), GFP_KERNEL);
+	if (!page) {
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+
+	guest_addr = kvm_vcpu_gfn_to_hva(vcpu, gfn);
+	npages_pinned = pin_user_pages_fast(guest_addr, 1,
+					    FOLL_WRITE | FOLL_NOFAULT | FOLL_LONGTERM,
+					    &page);
+	if (npages_pinned != 1) {
+		pr_err("%s: Failed to pin shared irte page, npage_pinned = %d",
+		       __func__, npages_pinned);
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+	tdx_vcpu->pinned_page = page;
+
+	shared_page_vaddr = page_address(page);
+	if (!shared_page_vaddr) {
+		pr_err("%s: invalid shared_irte_hva\n", __func__);
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+
+	/* Copy the first entry from the shared page to get the L1 PIR */
+	memcpy((void *)&sirte_hdr, shared_page_vaddr,
+	       sizeof(struct sirte_header));
+	tdx_vcpu->shared_irte_pir = sirte_hdr.pir;
+
+	tdvmcall_set_return_code(vcpu, TDVMCALL_SUCCESS);
+	return 1;
+}
+
 static int handle_tdvmcall(struct kvm_vcpu *vcpu)
 {
 	if (tdvmcall_exit_type(vcpu))
@@ -1605,6 +1671,8 @@ static int handle_tdvmcall(struct kvm_vcpu *vcpu)
 		return tdx_emulate_wrmsr(vcpu);
 	case TDVMCALL_GET_TD_VM_CALL_INFO:
 		return tdx_get_td_vm_call_info(vcpu);
+	case TDG_VP_VMCALL_SHARED_IRTE_HDR:
+		return tdx_handle_shared_irte_header(vcpu);
 	default:
 		break;
 	}
