@@ -1195,6 +1195,8 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 	.post_memory_mapping = vt_post_memory_mapping,
 
 	.is_irq_event_pt = tdx_is_irq_event_pt,
+	.pt_ioapic_irq_event = tdx_pt_ioapic_irq_event,
+	.pt_msi_irq_event = tdx_pt_msi_irq_event,
 };
 
 struct kvm_x86_init_ops vt_init_ops __initdata = {

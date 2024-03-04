@@ -7,6 +7,7 @@
 #include "posted_intr.h"
 #include "pmu_intel.h"
 #include "tdx_ops.h"
+#include "ioapic.h"
 
 struct kvm_tdx {
 	struct kvm kvm;
@@ -197,6 +198,10 @@ struct vcpu_tdx {
 	/* Shared page to pass irq event to L1 */
 	struct page *pinned_page;
 	u8 shared_irte_pir;
+	/*
+	 * spinlock to serialize the entry of irq event in the shared page.
+	 */
+	spinlock_t sirte_lock;
 };
 
 static inline bool is_td(struct kvm *kvm)

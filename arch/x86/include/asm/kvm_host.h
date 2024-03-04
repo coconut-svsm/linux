@@ -1885,6 +1885,10 @@ struct kvm_x86_ops {
 	void (*post_memory_mapping)(struct kvm_vcpu *vcpu,
 				    struct kvm_memory_mapping *mapping);
 	bool (*is_irq_event_pt)(struct kvm *kvm);
+	int (*pt_ioapic_irq_event)(struct kvm *kvm, u32 irq, u32 irq_source_id,
+				   u32 level);
+	int (*pt_msi_irq_event)(struct kvm *kvm, struct kvm_vcpu *vcpu,
+				struct kvm_lapic_irq *irq);
 };
 
 struct kvm_x86_nested_ops {
