@@ -41,6 +41,13 @@ struct kvm_tdx {
 	/* For KVM_MEMORY_MAPPING */
 	struct mutex source_lock;
 	struct page *source_page;
+
+	/* Number of TD partitioning guests can be created by this TD */
+	u8 num_l2_vms;
+
+	/* The actual page number of tdcs/tdvpx */
+	u8 nr_tdcs_pages;
+	u8 nr_tdvpx_pages;
 };
 
 union tdx_exit_reason {

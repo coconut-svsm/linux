@@ -527,7 +527,7 @@ void tdx_vm_free(struct kvm *kvm)
 		return;
 
 	if (kvm_tdx->tdcs_pa) {
-		for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
+		for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
 			if (kvm_tdx->tdcs_pa[i])
 				tdx_reclaim_control_page(kvm_tdx->tdcs_pa[i]);
 		}
@@ -778,6 +778,7 @@ void tdx_vcpu_put(struct kvm_vcpu *vcpu)
 
 void tdx_vcpu_free(struct kvm_vcpu *vcpu)
 {
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
 	struct vcpu_tdx *tdx = to_tdx(vcpu);
 	int i;
 
@@ -803,7 +804,7 @@ void tdx_vcpu_free(struct kvm_vcpu *vcpu)
 	}
 
 	if (tdx->tdvpx_pa) {
-		for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
+		for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
 			if (tdx->tdvpx_pa[i])
 				tdx_reclaim_control_page(tdx->tdvpx_pa[i]);
 		}
@@ -2506,6 +2507,13 @@ static int setup_tdparams(struct kvm *kvm, struct td_params *td_params,
 	if (ret)
 		return ret;
 
+	if (init_vm->num_l2_vms > tdx_info->max_num_l2_vms) {
+		pr_err("TDX: Invalid num_l2_vms %d, maximum %d\n",
+		       init_vm->num_l2_vms, tdx_info->max_num_l2_vms);
+		return -EOPNOTSUPP;
+	}
+	td_params->num_l2_vms = init_vm->num_l2_vms;
+
 #define MEMCPY_SAME_SIZE(dst, src)				\
 	do {							\
 		BUILD_BUG_ON(sizeof(dst) != sizeof(src));	\
@@ -2544,11 +2552,21 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
 		goto free_hkid;
 	tdr_pa = __pa(va);
 
-	tdcs_pa = kcalloc(tdx_info->nr_tdcs_pages, sizeof(*kvm_tdx->tdcs_pa),
+	kvm_tdx->num_l2_vms = td_params->num_l2_vms;
+	/*
+	 * Count the tdcs/tdvps pages according to the number of L2
+	 * VMs.
+	 */
+	kvm_tdx->nr_tdcs_pages = tdx_info->nr_tdcs_pages +
+				 kvm_tdx->num_l2_vms * tdx_info->nr_tdcs_pages_per_l2_vm;
+	kvm_tdx->nr_tdvpx_pages = tdx_info->nr_tdvpx_pages +
+				  kvm_tdx->num_l2_vms * tdx_info->nr_tdvpx_pages_per_l2_vm;
+
+	tdcs_pa = kcalloc(kvm_tdx->nr_tdcs_pages, sizeof(*kvm_tdx->tdcs_pa),
 			  GFP_KERNEL_ACCOUNT | __GFP_ZERO);
 	if (!tdcs_pa)
 		goto free_tdr;
-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
 		va = __get_free_page(GFP_KERNEL_ACCOUNT);
 		if (!va)
 			goto free_tdcs;
@@ -2634,7 +2652,7 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
 	}
 
 	kvm_tdx->tdcs_pa = tdcs_pa;
-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
 		err = tdh_mng_addcx(kvm_tdx->tdr_pa, tdcs_pa[i]);
 		if (err == TDX_RND_NO_ENTROPY) {
 			/* Here it's hard to allow userspace to retry. */
@@ -2676,7 +2694,7 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
 	 * with partial initialization.
 	 */
 teardown:
-	for (; i < tdx_info->nr_tdcs_pages; i++) {
+	for (; i < kvm_tdx->nr_tdcs_pages; i++) {
 		if (tdcs_pa[i]) {
 			free_page((unsigned long)__va(tdcs_pa[i]));
 			tdcs_pa[i] = 0;
@@ -2692,7 +2710,7 @@ free_packages:
 	cpus_read_unlock();
 	free_cpumask_var(packages);
 free_tdcs:
-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
 		if (tdcs_pa[i])
 			free_page((unsigned long)__va(tdcs_pa[i]));
 	}
@@ -2969,13 +2987,13 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
 		return -ENOMEM;
 	tdvpr_pa = __pa(va);
 
-	tdvpx_pa = kcalloc(tdx_info->nr_tdvpx_pages, sizeof(*tdx->tdvpx_pa),
+	tdvpx_pa = kcalloc(kvm_tdx->nr_tdvpx_pages, sizeof(*tdx->tdvpx_pa),
 			   GFP_KERNEL_ACCOUNT);
 	if (!tdvpx_pa) {
 		ret = -ENOMEM;
 		goto free_tdvpr;
 	}
-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
 		va = __get_free_page(GFP_KERNEL_ACCOUNT);
 		if (!va) {
 			ret = -ENOMEM;
@@ -2993,11 +3011,11 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
 	tdx->tdvpr_pa = tdvpr_pa;
 
 	tdx->tdvpx_pa = tdvpx_pa;
-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
 		err = tdh_vp_addcx(tdx->tdvpr_pa, tdvpx_pa[i]);
 		if (KVM_BUG_ON(err, vcpu->kvm)) {
 			pr_tdx_error(TDH_VP_ADDCX, err, NULL);
-			for (; i < tdx_info->nr_tdvpx_pages; i++) {
+			for (; i < kvm_tdx->nr_tdvpx_pages; i++) {
 				free_page((unsigned long)__va(tdvpx_pa[i]));
 				tdvpx_pa[i] = 0;
 			}
@@ -3019,7 +3037,7 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
 	return 0;
 
 free_tdvpx:
-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
 		if (tdvpx_pa[i])
 			free_page((unsigned long)__va(tdvpx_pa[i]));
 		tdvpx_pa[i] = 0;
