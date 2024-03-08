@@ -2685,6 +2685,21 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
 
 	kvm_set_apicv_inhibit(kvm, APICV_INHIBIT_REASON_TDX);
 
+	for (i = 0; i < kvm_tdx->num_l2_vms; i++) {
+		enum tdp_vm_id vm_id = index_to_tdp_vm_id(i);
+		union tdx_tdcs_exec_vm_ctls vm_ctls = { .full = 0 };
+
+		vm_ctls.ept_violation_on_l2sept = 1;
+		err = tdh_mng_wr(kvm_tdx->tdr_pa,
+				 TDCS_EXEC_NON_ARCH(TD_TDCS_EXEC_VM_CTLS + vm_id),
+				 vm_ctls.full, TDX_TDCS_EXEC_VM_CTLS_VALID_MASK, &out);
+		if (WARN_ON_ONCE(err)) {
+			pr_tdx_error(TDH_MNG_WR, err, &out);
+			ret = -EIO;
+			goto teardown;
+		}
+	}
+
 	return 0;
 
 	/*

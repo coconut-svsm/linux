@@ -56,6 +56,11 @@ static inline enum pg_level tdx_sept_level_to_pg_level(int tdx_level)
 	return tdx_level + 1;
 }
 
+static inline enum tdp_vm_id index_to_tdp_vm_id(int i)
+{
+	return i + TDP_VM_1;
+}
+
 static inline void tdx_clflush_page(hpa_t addr, enum pg_level level)
 {
 	clflush_cache_range(__va(addr), KVM_HPAGE_SIZE(level));
@@ -239,6 +244,19 @@ static inline u64 tdh_mng_rd(hpa_t tdr, u64 field, struct tdx_module_args *out)
 	};
 
 	return tdx_seamcall(TDH_MNG_RD, &in, out);
+}
+
+static inline u64 tdh_mng_wr(hpa_t tdr, u64 field, u64 data, u64 mask,
+			     struct tdx_module_args *out)
+{
+	struct tdx_module_args in = {
+		.rcx = tdr,
+		.rdx = field,
+		.r8 = data,
+		.r9 = mask,
+	};
+
+	return tdx_seamcall(TDH_MNG_WR, &in, out);
 }
 
 static inline u64 tdh_mem_page_demote(hpa_t tdr, gpa_t gpa, int level, hpa_t page,
