@@ -58,6 +58,10 @@ struct tdx_info {
 	u8 nr_tdcs_pages;
 	u8 nr_tdvpx_pages;
 
+	u8 max_num_l2_vms;
+	u8 nr_tdcs_pages_per_l2_vm;
+	u8 nr_tdvpx_pages_per_l2_vm;
+
 	u16 num_cpuid_config;
 	/* This must the last member. */
 	DECLARE_FLEX_ARRAY(struct kvm_tdx_cpuid_config, cpuid_configs);
@@ -2322,7 +2326,8 @@ static int tdx_get_capabilities(struct kvm_tdx_cmd *cmd)
 		((kvm_get_shadow_phys_bits() >= 52 &&
 		  cpu_has_vmx_ept_5levels()) ? TDX_CAP_GPAW_52 : 0),
 		.nr_cpuid_configs = tdx_info->num_cpuid_config,
-		.padding = 0,
+		.max_num_l2_vms = tdx_info->max_num_l2_vms,
+		.padding = {0},
 	};
 
 	if (copy_to_user(user_caps, caps, sizeof(*caps))) {
@@ -3294,6 +3299,28 @@ static int __init tdx_module_setup(void)
 	 * -1 for TDVPR.
 	 */
 	tdx_info->nr_tdvpx_pages = tdvps_base_size / PAGE_SIZE - 1;
+
+	if (tdx_info->features0 & MD_FIELD_ID_FEATURES0_TD_PARTITIONING) {
+		u16 tdcs_size_per_l2_vm, tdvps_size_per_l2_vm;
+		struct tdx_md_map l2_mds[] = {
+			TDX_MD_MAP(TDCS_SIZE_PER_L2_VM, &tdcs_size_per_l2_vm),
+			TDX_MD_MAP(TDVPS_SIZE_PER_L2_VM, &tdvps_size_per_l2_vm),
+		};
+
+		ret = tdx_md_read(l2_mds, ARRAY_SIZE(l2_mds));
+		if (ret)
+			goto error_out;
+		/*
+		 * With TD partitioning feature supported, a TD can maximum support
+		 * creating 3 TD partitioning guest. Set the max_num_l2_vms with the
+		 * maximum value and user can decide the number of TD partitioning
+		 * guests accordingly.
+		 */
+		tdx_info->max_num_l2_vms = MAX_NUM_L2_VMS;
+		tdx_info->nr_tdcs_pages_per_l2_vm = tdcs_size_per_l2_vm / PAGE_SIZE;
+		tdx_info->nr_tdvpx_pages_per_l2_vm = tdvps_size_per_l2_vm / PAGE_SIZE;
+		pr_info("TDX module: TD partitioning is supported\n");
+	}
 
 #if 0
 	/*
