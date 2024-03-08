@@ -15,6 +15,9 @@
 #include "tdx_arch.h"
 #include "x86.h"
 
+#define TDX_SEAMCALL_V0				(0ULL << 16)
+#define TDX_SEAMCALL_V1				(1ULL << 16)
+
 static inline u64 tdx_seamcall(u64 op, struct tdx_module_args *in,
 			       struct tdx_module_args *out)
 {
@@ -122,17 +125,52 @@ static inline u64 tdh_mem_page_add(hpa_t tdr, gpa_t gpa, hpa_t hpa, hpa_t source
 	return tdx_seamcall_sept(TDH_MEM_PAGE_ADD, &in, out);
 }
 
-static inline u64 tdh_mem_sept_add(hpa_t tdr, gpa_t gpa, int level, hpa_t page,
-				   struct tdx_module_args *out)
+static inline u64 __tdh_mem_sept_add(hpa_t tdr, gpa_t gpa, int level, hpa_t l1sept,
+				     hpa_t l2sept1, hpa_t l2sept2, hpa_t l2sept3,
+				     struct tdx_module_args *out)
 {
+	hpa_t l2septs[MAX_NUM_L2_VMS] = {l2sept1, l2sept2, l2sept3};
+	u64 version = TDX_SEAMCALL_V0;
+	int i;
+
+	BUILD_BUG_ON(MAX_NUM_L2_VMS != 3);
+
+	if (VALID_PAGE(l1sept))
+		tdx_clflush_page(l1sept, PG_LEVEL_4K);
+
+	for (i = 0; i < MAX_NUM_L2_VMS; i++) {
+		if (VALID_PAGE(l2septs[i])) {
+			tdx_clflush_page(l2septs[i], PG_LEVEL_4K);
+			/* Use version 1 if any of the l2sept is valid */
+			version = TDX_SEAMCALL_V1;
+		}
+	}
+
 	struct tdx_module_args in = {
 		.rcx = gpa | level,
 		.rdx = tdr,
-		.r8 = page,
+		.r8 = l1sept,
+		.r9 = l2sept1,
+		.r10 = l2sept2,
+		.r11 = l2sept3,
 	};
 
-	tdx_clflush_page(page, PG_LEVEL_4K);
-	return tdx_seamcall_sept(TDH_MEM_SEPT_ADD, &in, out);
+	return tdx_seamcall_sept(version | TDH_MEM_SEPT_ADD, &in, out);
+}
+
+static inline u64 tdh_mem_sept_add(hpa_t tdr, gpa_t gpa, int level, hpa_t page,
+				   struct tdx_module_args *out)
+{
+	return __tdh_mem_sept_add(tdr, gpa, level, page, INVALID_PAGE,
+				  INVALID_PAGE, INVALID_PAGE, out);
+}
+
+static inline u64 tdh_mem_l2sept_add(hpa_t tdr, gpa_t gpa, int level,
+				     hpa_t l2sept1, hpa_t l2sept2,
+				     hpa_t l2sept3, struct tdx_module_args *out)
+{
+	return __tdh_mem_sept_add(tdr, gpa, level, INVALID_PAGE,
+				  l2sept1, l2sept2, l2sept3, out);
 }
 
 static inline u64 tdh_mem_sept_rd(hpa_t tdr, gpa_t gpa, int level,
