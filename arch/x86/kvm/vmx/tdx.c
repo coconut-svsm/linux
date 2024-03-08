@@ -20,6 +20,12 @@
 #undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+static struct kmem_cache *l2sept_header_cache;
+struct l2sept_header {
+	struct list_head node;
+	unsigned long page_va;
+};
+
 /*
  * Key id globally used by TDX module: TDX module maps TDR with this TDX global
  * key id.  TDR includes key id assigned to the TD.  Then TDX module maps other
@@ -582,6 +588,16 @@ static int tdx_do_tdh_mng_key_config(void *param)
 	return 0;
 }
 
+static void td_partitioning_init(struct kvm_tdx *kvm_tdx)
+{
+	int i;
+
+	for (i = 0; i < MAX_NUM_L2_VMS; i++) {
+		INIT_LIST_HEAD(&kvm_tdx->l2sept_list[i].head);
+		spin_lock_init(&kvm_tdx->l2sept_list[i].lock);
+	}
+}
+
 int tdx_vm_init(struct kvm *kvm)
 {
 	/*
@@ -610,6 +626,9 @@ int tdx_vm_init(struct kvm *kvm)
 	kvm->max_vcpus = min(kvm->max_vcpus, TDX_MAX_VCPUS);
 
 	mutex_init(&to_kvm_tdx(kvm)->source_lock);
+
+	td_partitioning_init(to_kvm_tdx(kvm));
+
 	return 0;
 }
 
@@ -3483,6 +3502,16 @@ int __init tdx_hardware_setup(struct kvm_x86_ops *x86_ops)
 	if (r)
 		goto out;
 
+	if (tdx_info->max_num_l2_vms) {
+		l2sept_header_cache = kmem_cache_create("l2sept_header",
+							sizeof(struct l2sept_header),
+							0, SLAB_ACCOUNT, NULL);
+		if (!l2sept_header_cache) {
+			r = -ENOMEM;
+			goto out;
+		}
+	}
+
 	x86_ops->link_private_spt = tdx_sept_link_private_spt;
 	x86_ops->free_private_spt = tdx_sept_free_private_spt;
 	x86_ops->split_private_spt = tdx_sept_split_private_spt;
@@ -3505,6 +3534,7 @@ void tdx_hardware_unsetup(void)
 {
 	kfree(tdx_info);
 	kfree(tdx_mng_key_config_lock);
+	kmem_cache_destroy(l2sept_header_cache);
 }
 
 int tdx_offline_cpu(void)
