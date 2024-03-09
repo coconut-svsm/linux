@@ -601,6 +601,23 @@ void tdx_mmu_release_hkid(struct kvm *kvm)
 		;
 }
 
+static void td_partitioning_cleanup(struct kvm_tdx *kvm_tdx)
+{
+	struct l2sept_header *p, *n;
+	struct list_head *head;
+	int i;
+
+	for (i = 0; i < MAX_NUM_L2_VMS; i++) {
+		head = &kvm_tdx->l2sept_list[i].head;
+		list_for_each_entry_safe(p, n, head, node) {
+			if (WARN_ON(tdx_reclaim_page(__pa(p->page_va), PG_LEVEL_4K)))
+				continue;
+			list_del(&p->node);
+			free_l2sept_header(p);
+		}
+	}
+}
+
 void tdx_vm_free(struct kvm *kvm)
 {
 	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
@@ -614,6 +631,8 @@ void tdx_vm_free(struct kvm *kvm)
 	 */
 	if (is_hkid_assigned(kvm_tdx))
 		return;
+
+	td_partitioning_cleanup(kvm_tdx);
 
 	if (kvm_tdx->tdcs_pa) {
 		for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
