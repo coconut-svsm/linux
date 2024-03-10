@@ -1116,6 +1116,9 @@ fastpath_t tdx_vcpu_run(struct kvm_vcpu *vcpu)
 	if (pi_test_on(&tdx->pi_desc)) {
 		apic->send_IPI_self(POSTED_INTR_VECTOR);
 
+		if (is_l2vmexit(vcpu))
+			tdx->resume_l1 = true;
+
 		kvm_wait_lapic_expire(vcpu);
 	}
 
