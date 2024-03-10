@@ -1603,8 +1603,13 @@ static int handle_tdvmcall(struct kvm_vcpu *vcpu)
 
 void tdx_load_mmu_pgd(struct kvm_vcpu *vcpu, hpa_t root_hpa, int pgd_level)
 {
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
+	int i;
+
 	WARN_ON_ONCE(root_hpa & ~PAGE_MASK);
 	td_vmcs_write64(to_tdx(vcpu), SHARED_EPT_POINTER, root_hpa);
+	for (i = 0; i < kvm_tdx->num_l2_vms; i++)
+		l2td_vmcs_write64(to_tdx(vcpu), SHARED_EPT_POINTER, root_hpa, i);
 }
 
 static void tdx_unpin(struct kvm *kvm, kvm_pfn_t pfn, enum pg_level level)
