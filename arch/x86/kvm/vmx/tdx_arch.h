@@ -344,4 +344,8 @@ static inline bool is_tdp_vm_id(enum tdp_vm_id vm_id)
 	return (vm_id >= TDP_VM_1) && (vm_id <= TDP_VM_3);
 }
 
+#define TDVPS_L2VMCS_1_CLASS_CODE	36
+#define L2VMCS_CLASS(vm)		(TDVPS_L2VMCS_1_CLASS_CODE + vm * 8)
+#define L2VMCS_FIELD(vm, field)		BUILD_TDX_FIELD(L2VMCS_CLASS(vm), field)
+
 #endif /* __KVM_X86_TDX_ARCH_H */

@@ -257,6 +257,41 @@ TDX_BUILD_TDVPS_ACCESSORS(64, VMCS, vmcs);
 TDX_BUILD_TDVPS_ACCESSORS(8, MANAGEMENT, management);
 TDX_BUILD_TDVPS_ACCESSORS(64, STATE_NON_ARCH, state_non_arch);
 
+#define TDX_BUILD_L2VMCS_ACCESSORS(bits)					\
+static __always_inline u##bits l2td_vmcs_read##bits(struct vcpu_tdx *tdx,	\
+						    u32 field, int vm)		\
+{										\
+	struct tdx_module_args out;						\
+	u64 err;								\
+										\
+	tdvps_vmcs_check(field, bits);						\
+	err = tdh_vp_rd(tdx->tdvpr_pa, L2VMCS_FIELD(vm, field),	&out);		\
+	if (KVM_BUG_ON(err, tdx->vcpu.kvm)) {					\
+		pr_err("TDH_VP_RD[VMCS.0x%x vm %d] failed: 0x%llx 0x%llx\n",	\
+		       field, vm, err, L2VMCS_FIELD(vm, field));		\
+		return 0;							\
+	}									\
+	return (u##bits)out.r8;							\
+}										\
+static __always_inline void l2td_vmcs_write##bits(struct vcpu_tdx *tdx,		\
+						  u32 field, u##bits val,	\
+						  int vm)			\
+{										\
+	struct tdx_module_args out;						\
+	u64 err;								\
+										\
+	tdvps_vmcs_check(field, bits);						\
+	err = tdh_vp_wr(tdx->tdvpr_pa, L2VMCS_FIELD(vm, field),			\
+			val, GENMASK_ULL(bits - 1, 0), &out);			\
+	if (KVM_BUG_ON(err, tdx->vcpu.kvm))					\
+		pr_err("TDH_VP_WR[VMCS.0x%x vm %d] = 0x%llx failed: 0x%llx 0x%llx\n", \
+		       field, vm, (u64)val, err, L2VMCS_FIELD(vm, field));	\
+}										\
+
+TDX_BUILD_L2VMCS_ACCESSORS(16);
+TDX_BUILD_L2VMCS_ACCESSORS(32);
+TDX_BUILD_L2VMCS_ACCESSORS(64);
+
 static __always_inline u64 td_tdcs_exec_read64(struct kvm_tdx *kvm_tdx, u32 field)
 {
 	struct tdx_module_args out;
