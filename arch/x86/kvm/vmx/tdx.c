@@ -1571,6 +1571,22 @@ static int handle_tdvmcall(struct kvm_vcpu *vcpu)
 	if (tdvmcall_exit_type(vcpu))
 		return tdx_emulate_vmcall(vcpu);
 
+	if (is_l2vmexit(vcpu)) {
+		switch (tdvmcall_leaf(vcpu)) {
+		/*
+		 * L2 may access the virt device emulated by
+		 * host VMM with tdvmcall MMIO request. Host
+		 * vmm can directly emulate such MMIO.
+		 */
+		case EXIT_REASON_EPT_VIOLATION:
+			break;
+		/* Resume L1 to handle the other tdvmcalls from L2 */
+		default:
+			to_tdx(vcpu)->resume_l1 = true;
+			return 1;
+		}
+	}
+
 	switch (tdvmcall_leaf(vcpu)) {
 	case EXIT_REASON_CPUID:
 		return tdx_emulate_cpuid(vcpu);
