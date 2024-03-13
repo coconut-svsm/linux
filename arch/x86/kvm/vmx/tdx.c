@@ -2181,6 +2181,21 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
 			to_tdx(vcpu)->resume_l1 = true;
 			return 1;
 		}
+		/*
+		 * When L2 accesses a private page that isn't mapped in L1 TD's
+		 * SEPT, it triggers an EPT violation for the host VMM, which
+		 * can be handled by the TD ept violation handling process. A
+		 * private page may not be set to TD's SEPT within one vmexit
+		 * cycle if e.g., page fault stale is happened. We can enter L2
+		 * to retry but this means the same L2 instruction will be
+		 * intercepted again by EPT violation vmexit. If this retry
+		 * process is repeated excessively, TDX module may identify it
+		 * as a zero-step attack. So instead of entering L2 to intercept
+		 * the same instruction again, resuming L1 to do the next level
+		 * handling as eventually the private page can be mapped during
+		 * L1 adding page alias for L2.
+		 */
+		to_tdx(vcpu)->resume_l1 = kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu));
 	}
 
 	if (kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu))) {
