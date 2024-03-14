@@ -135,6 +135,8 @@ struct vcpu_tdx {
 	 * TODO: Support PMU for TDX.  Future work.
 	 */
 	struct lbr_desc lbr_desc;
+
+	bool resume_l1;
 };
 
 static inline bool is_td(struct kvm *kvm)

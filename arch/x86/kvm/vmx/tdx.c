@@ -231,6 +231,13 @@ static inline bool is_valid_tdp_vm_id(struct kvm *kvm, enum tdp_vm_id vm_id)
 	return (vm_id <= to_kvm_tdx(kvm)->num_l2_vms) ? is_tdp_vm_id(vm_id) : false;
 }
 
+static inline bool is_l2vmexit(struct kvm_vcpu *vcpu)
+{
+	union tdx_exit_info exit_info = { .full = tdexit_exit_qual(vcpu) };
+
+	return is_valid_tdp_vm_id(vcpu->kvm, exit_info.vm);
+}
+
 static inline hpa_t l2sept_hpa_from_output(struct kvm *kvm, enum tdp_vm_id vm_id,
 					   struct tdx_module_args *out)
 {
@@ -1023,6 +1030,7 @@ static void tdx_restore_host_xsave_state(struct kvm_vcpu *vcpu)
 
 static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
 {
+	union tdx_vpenter_handle_flags handle_flags = { .full = tdx->tdvpr_pa };
 	struct tdx_module_args args;
 
 	/*
@@ -1030,6 +1038,11 @@ static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
 	 * should call to_tdx().
 	 */
 	struct kvm_vcpu *vcpu = &tdx->vcpu;
+
+	if (tdx->resume_l1) {
+		handle_flags.resume_l1 = 1;
+		tdx->resume_l1 = false;
+	}
 
 	guest_state_enter_irqoff();
 
@@ -1040,7 +1053,7 @@ static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
 	 *   which means TDG.VP.VMCALL.
 	 */
 	args = (struct tdx_module_args) {
-		.rcx = tdx->tdvpr_pa,
+		.rcx = handle_flags.full,
 #define REG(reg, REG)	.reg = vcpu->arch.regs[VCPU_REGS_ ## REG]
 		REG(rdx, RDX),
 		REG(r8,  R8),
