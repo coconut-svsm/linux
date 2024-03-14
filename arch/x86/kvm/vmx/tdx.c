@@ -2169,6 +2169,20 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
 		return tdx_handle_l2sept_walking_failure(vcpu, err_page_level, vm_id);
 	}
 
+	if (is_l2vmexit(vcpu)) {
+		gfn_t gfn = gpa_to_gfn(tdexit_gpa(vcpu)) & ~kvm_gfn_shared_mask(vcpu->kvm);
+		struct kvm_memory_slot *slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+
+		if (!slot) {
+			/*
+			 * An EPT violation caused by L2 GPA without backing
+			 * memory means this is for L2 MMIO. Let L1 VMM to handle.
+			 */
+			to_tdx(vcpu)->resume_l1 = true;
+			return 1;
+		}
+	}
+
 	if (kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu))) {
 		/*
 		 * Always treat SEPT violations as write faults.  Ignore the
