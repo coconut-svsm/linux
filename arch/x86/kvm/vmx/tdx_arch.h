@@ -245,7 +245,9 @@ union tdx_ext_exit_qualification {
 		u64 err_sept_level	:  3;
 		u64 err_sept_state	:  8;
 		u64 err_sept_is_leaf	:  1;
-		u64 reserved1		: 17;
+		u64 reserved1		:  5;
+		u64 vm_id		:  2;
+		u64 reserved2		: 10;
 	};
 	u64 full;
 };
@@ -253,6 +255,7 @@ union tdx_ext_exit_qualification {
 enum tdx_ext_exit_qualification_type {
 	EXT_EXIT_QUAL_NONE = 0,
 	EXT_EXIT_QUAL_ACCEPT = 1,
+	EXT_EXIT_QUAL_GPA_DETAILS = 2,
 	NUM_EXT_EXIT_QUAL,
 };
 
@@ -315,5 +318,10 @@ enum tdp_vm_id {
 
 	MAX_NUM_L2_VMS = TDP_VM_3,
 };
+
+static inline bool is_tdp_vm_id(enum tdp_vm_id vm_id)
+{
+	return (vm_id >= TDP_VM_1) && (vm_id <= TDP_VM_3);
+}
 
 #endif /* __KVM_X86_TDX_ARCH_H */

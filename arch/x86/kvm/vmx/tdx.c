@@ -212,6 +212,11 @@ static inline bool is_td_finalized(struct kvm_tdx *kvm_tdx)
 	return kvm_tdx->finalized;
 }
 
+static inline bool is_valid_tdp_vm_id(struct kvm *kvm, enum tdp_vm_id vm_id)
+{
+	return (vm_id <= to_kvm_tdx(kvm)->num_l2_vms) ? is_tdp_vm_id(vm_id) : false;
+}
+
 static inline void tdx_disassociate_vp(struct kvm_vcpu *vcpu)
 {
 	lockdep_assert_irqs_disabled();
@@ -1928,6 +1933,13 @@ void tdx_deliver_interrupt(struct kvm_lapic *apic, int delivery_mode,
 	__vmx_deliver_posted_interrupt(vcpu, &tdx->pi_desc, vector);
 }
 
+static int tdx_handle_l2sept_walking_failure(struct kvm_vcpu *vcpu, int tdx_level,
+					     enum tdp_vm_id vm_id)
+{
+	/* TODO: add L2 SEPT support */
+	return -EOPNOTSUPP;
+}
+
 static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
 {
 	union tdx_ext_exit_qualification ext_exit_qual;
@@ -1943,6 +1955,15 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
 		return 0;
 	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_ACCEPT) {
 		err_page_level = tdx_sept_level_to_pg_level(ext_exit_qual.req_sept_level);
+	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_GPA_DETAILS) {
+		enum tdp_vm_id vm_id = ext_exit_qual.vm_id;
+
+		if (KVM_BUG_ON(!is_valid_tdp_vm_id(vcpu->kvm, vm_id), vcpu->kvm)) {
+			pr_err("EPT violation with invalid vm_id %d\n", vm_id);
+			return 0;
+		}
+		err_page_level = ext_exit_qual.err_sept_level;
+		return tdx_handle_l2sept_walking_failure(vcpu, err_page_level, vm_id);
 	}
 
 	if (kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu))) {
