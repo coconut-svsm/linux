@@ -18,6 +18,9 @@
 #define TDX_SEAMCALL_V0				(0ULL << 16)
 #define TDX_SEAMCALL_V1				(1ULL << 16)
 
+#define SEPT_ADD_ALLOW_EXISTING			1
+#define SEPT_NOT_USED_MASK			BIT(63)
+
 static inline u64 tdx_seamcall(u64 op, struct tdx_module_args *in,
 			       struct tdx_module_args *out)
 {
@@ -62,6 +65,11 @@ static inline enum pg_level tdx_sept_level_to_pg_level(int tdx_level)
 static inline enum tdp_vm_id index_to_tdp_vm_id(int i)
 {
 	return i + TDP_VM_1;
+}
+
+static inline int tdp_vm_id_to_index(enum tdp_vm_id vm_id)
+{
+	return vm_id - TDP_VM_1;
 }
 
 static inline void tdx_clflush_page(hpa_t addr, enum pg_level level)

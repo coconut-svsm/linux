@@ -217,6 +217,84 @@ static inline bool is_valid_tdp_vm_id(struct kvm *kvm, enum tdp_vm_id vm_id)
 	return (vm_id <= to_kvm_tdx(kvm)->num_l2_vms) ? is_tdp_vm_id(vm_id) : false;
 }
 
+static inline hpa_t l2sept_hpa_from_output(struct kvm *kvm, enum tdp_vm_id vm_id,
+					   struct tdx_module_args *out)
+{
+	/*
+	 * Out.R8 contains the corresponding HPA information for
+	 * L1 VM, and Out.R9/R10/R11 contains the corresponding
+	 * HPA information of L2 VM#1/VM#2/VM#3.
+	 */
+	switch (vm_id) {
+	case TDP_VM_1:
+		return out->r9;
+	case TDP_VM_2:
+		return out->r10;
+	case TDP_VM_3:
+		return out->r11;
+	default:
+		break;
+	}
+
+	KVM_BUG_ON(1, kvm);
+	return INVALID_PAGE;
+}
+
+static struct l2sept_header *allocate_l2sept_header(void)
+{
+	struct l2sept_header *header;
+
+	if (WARN_ON_ONCE(!l2sept_header_cache))
+		return NULL;
+
+	header = kmem_cache_alloc(l2sept_header_cache, GFP_KERNEL_ACCOUNT);
+	if (!header)
+		return NULL;
+
+	header->page_va = __get_free_page(GFP_KERNEL_ACCOUNT);
+	if (!header->page_va) {
+		kmem_cache_free(l2sept_header_cache, header);
+		return NULL;
+	}
+
+	set_page_private(virt_to_page(header->page_va), (unsigned long)header);
+	return header;
+}
+
+static void free_l2sept_header(struct l2sept_header *header)
+{
+	free_page(header->page_va);
+	kmem_cache_free(l2sept_header_cache, header);
+}
+
+static void add_l2sept_header(struct kvm *kvm, enum tdp_vm_id vm_id,
+			      struct l2sept_header *header)
+{
+	int i;
+
+	if (KVM_BUG_ON(!is_valid_tdp_vm_id(kvm, vm_id), kvm))
+		return;
+
+	i = tdp_vm_id_to_index(vm_id);
+	spin_lock(&to_kvm_tdx(kvm)->l2sept_list[i].lock);
+	list_add(&header->node, &to_kvm_tdx(kvm)->l2sept_list[i].head);
+	spin_unlock(&to_kvm_tdx(kvm)->l2sept_list[i].lock);
+}
+
+static void del_l2sept_header(struct kvm *kvm, enum tdp_vm_id vm_id,
+			      struct l2sept_header *header)
+{
+	int i;
+
+	if (KVM_BUG_ON(!is_valid_tdp_vm_id(kvm, vm_id), kvm))
+		return;
+
+	i = tdp_vm_id_to_index(vm_id);
+	spin_lock(&to_kvm_tdx(kvm)->l2sept_list[i].lock);
+	list_del(&header->node);
+	spin_unlock(&to_kvm_tdx(kvm)->l2sept_list[i].lock);
+}
+
 static inline void tdx_disassociate_vp(struct kvm_vcpu *vcpu)
 {
 	lockdep_assert_irqs_disabled();
@@ -1936,8 +2014,86 @@ void tdx_deliver_interrupt(struct kvm_lapic *apic, int delivery_mode,
 static int tdx_handle_l2sept_walking_failure(struct kvm_vcpu *vcpu, int tdx_level,
 					     enum tdp_vm_id vm_id)
 {
-	/* TODO: add L2 SEPT support */
-	return -EOPNOTSUPP;
+	hpa_t l2sept_hpa[MAX_NUM_L2_VMS] = { [0 ... (MAX_NUM_L2_VMS - 1)] = INVALID_PAGE };
+	gpa_t gpa = tdexit_gpa(vcpu) & KVM_HPAGE_MASK(tdx_sept_level_to_pg_level(tdx_level));
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
+	struct l2sept_header *header;
+	struct tdx_module_args out;
+	hpa_t consumed_hpa, hpa;
+	u64 err;
+	int ret;
+
+	BUILD_BUG_ON(MAX_NUM_L2_VMS != 3);
+
+	/* Make sure the vm_id for a L2 VM is valid */
+	if (!is_valid_tdp_vm_id(vcpu->kvm, vm_id))
+		return -EINVAL;
+
+	header = allocate_l2sept_header();
+	if (!header)
+		return -ENOMEM;
+
+	/*
+	 * The l2 sept adding sequence is to add l2sept header to the list
+	 * first and then add the page to TDX module. Doing so is in pair with
+	 * the l2 sept removing sequence, which remove the page from TDX module
+	 * first and then delete l2sept header.
+	 */
+	add_l2sept_header(vcpu->kvm, vm_id, header);
+
+	/*
+	 * Allocate page for TDX module to build L2 SEPT tree
+	 * on the required level by using TDH.MEM.SEPT.ADD
+	 * version1 interface.
+	 */
+	hpa = __pa(header->page_va);
+	l2sept_hpa[tdp_vm_id_to_index(vm_id)] = hpa;
+	do {
+		/*
+		 * Use SEPT_ADD_ALLOW_EXISTING to avoid reporting error in case
+		 * the L2 SEPT paging page is just added by another CPU. The
+		 * SEPT_NOT_USED_MASK will be set to the HPA in the output.
+		 */
+		err = tdh_mem_l2sept_add(kvm_tdx->tdr_pa | SEPT_ADD_ALLOW_EXISTING,
+					 gpa, tdx_level, l2sept_hpa[0],
+					 l2sept_hpa[1], l2sept_hpa[2], &out);
+		/*
+		 * Simply retry TDH.MEM.SEPT.ADD by reusing every parameter
+		 * is fine as it was adding only one valid L2 SEPT paging page.
+		 */
+	} while (err == TDX_INTERRUPTED_RESUMABLE);
+
+	if (TDX_SEAMCALL_ERR_RECOVERABLE(err)) {
+		/* Retry for the recoverable error */
+		ret = 1;
+		goto free;
+	} else if (KVM_BUG_ON(err, vcpu->kvm)) {
+		pr_tdx_error(TDH_MEM_SEPT_ADD, err, &out);
+		ret = -EIO;
+		goto free;
+	}
+
+	consumed_hpa = l2sept_hpa_from_output(vcpu->kvm, vm_id, &out);
+	if (consumed_hpa == -1ULL) {
+		/*
+		 * TDH.MEM.SEPT.ADD returns -1ULL if the HPA is consumed
+		 * as a SEPT paging page
+		 */
+		return 1;
+	} else if (consumed_hpa == (hpa | SEPT_NOT_USED_MASK)) {
+		/* SEPT already added */
+		ret = 1;
+	} else {
+		pr_err("%s: failed to add L2 SEPT page 0x%llx: output: 0x%llx\n",
+		       __func__, hpa, consumed_hpa);
+		KVM_BUG_ON(1, vcpu->kvm);
+		ret = -EIO;
+	}
+
+free:
+	del_l2sept_header(vcpu->kvm, vm_id, header);
+	free_l2sept_header(header);
+	return ret;
 }
 
 static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)

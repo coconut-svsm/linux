@@ -30,6 +30,15 @@
 #define TDX_SUCCESS		0ULL
 #define TDX_RND_NO_ENTROPY	0x8000020300000000ULL
 
+#define TDX_NON_RECOVERABLE_BIT		62
+/*
+ * Error with the non-recoverable bit cleared indicates that the error is
+ * likely recoverable (e.g. due to lock busy in TDX module), and the seamcall
+ * can be retried.
+ */
+#define TDX_SEAMCALL_ERR_RECOVERABLE(err) \
+	(err >> TDX_NON_RECOVERABLE_BIT == 0x2)
+
 #ifndef __ASSEMBLY__
 
 #include <uapi/asm/mce.h>
