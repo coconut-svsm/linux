@@ -256,7 +256,7 @@ enum tdx_ext_exit_qualification_type {
 	EXT_EXIT_QUAL_NONE = 0,
 	EXT_EXIT_QUAL_ACCEPT = 1,
 	EXT_EXIT_QUAL_GPA_DETAILS = 2,
-	NUM_EXT_EXIT_QUAL,
+	EXT_EXIT_ATTR_WR = 5,
 };
 
 /*

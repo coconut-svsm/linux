@@ -212,6 +212,20 @@ static inline bool is_td_finalized(struct kvm_tdx *kvm_tdx)
 	return kvm_tdx->finalized;
 }
 
+
+static inline bool is_eeq_type_supported(enum tdx_ext_exit_qualification_type type)
+{
+	switch (type) {
+	case EXT_EXIT_QUAL_NONE:
+	case EXT_EXIT_QUAL_ACCEPT:
+	case EXT_EXIT_QUAL_GPA_DETAILS:
+	case EXT_EXIT_ATTR_WR:
+		return true;
+	}
+
+	return false;
+}
+
 static inline bool is_valid_tdp_vm_id(struct kvm *kvm, enum tdp_vm_id vm_id)
 {
 	return (vm_id <= to_kvm_tdx(kvm)->num_l2_vms) ? is_tdp_vm_id(vm_id) : false;
@@ -2123,12 +2137,13 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
 
 	ext_exit_qual.full = tdexit_ext_exit_qual(vcpu);
 
-	if (ext_exit_qual.type >= NUM_EXT_EXIT_QUAL) {
+	if (!is_eeq_type_supported(ext_exit_qual.type)) {
 		pr_err("EPT violation at gpa 0x%lx, with invalid ext exit qualification type 0x%x\n",
 			tdexit_gpa(vcpu), ext_exit_qual.type);
 		kvm_vm_bugged(vcpu->kvm);
 		return 0;
-	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_ACCEPT) {
+	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_ACCEPT ||
+		   ext_exit_qual.type == EXT_EXIT_ATTR_WR) {
 		err_page_level = tdx_sept_level_to_pg_level(ext_exit_qual.req_sept_level);
 	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_GPA_DETAILS) {
 		enum tdp_vm_id vm_id = ext_exit_qual.vm_id;
