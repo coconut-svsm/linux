@@ -70,6 +70,7 @@ struct kvm_tdx {
 	 */
 	struct {
 		u32 num_l2_vcpus;
+		unsigned long ioapic_pin_state[IOAPIC_NUM_PINS];
 	} l2_pt_irq[MAX_NUM_L2_VMS];
 };
 

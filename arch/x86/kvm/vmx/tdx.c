@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/cpu.h>
 #include <linux/mmu_context.h>
+#include <linux/bitops.h>
 
 #include <asm/fpu/xcr.h>
 #include <asm/tdx.h>
@@ -719,6 +720,8 @@ static void td_partitioning_init(struct kvm_tdx *kvm_tdx)
 		INIT_LIST_HEAD(&kvm_tdx->l2sept_list[i].head);
 		spin_lock_init(&kvm_tdx->l2sept_list[i].lock);
 		kvm_tdx->l2_pt_irq[i].num_l2_vcpus = 0;
+		memset(&kvm_tdx->l2_pt_irq[i].ioapic_pin_state, 0,
+		       sizeof(kvm_tdx->l2_pt_irq[i].ioapic_pin_state));
 	}
 }
 
@@ -1670,6 +1673,23 @@ static inline u32 tdx_find_next_vcpu(u32 last_vcpu, u32 max_vcpu)
 	return next_vcpu % max_vcpu;
 }
 
+static bool get_pin_state(struct kvm *kvm, u32 irq, u32 irq_source_id,
+			  u32 level)
+{
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
+
+	if (level != 0) {
+		kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq] |= 1 << irq_source_id;
+		__set_bit(irq_source_id,
+			  &kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq]);
+	} else {
+		__clear_bit(irq_source_id,
+			    &kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq]);
+	}
+
+	return !!kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq];
+}
+
 int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id,
 			    u32 level)
 {
@@ -1678,6 +1698,9 @@ int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id,
 	struct kvm_vcpu *vcpu;
 	static u32 last_idx;
 	u32 next_idx;
+	bool asserted;
+	u32 last_pin_state;
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
 
 	ASSERT(irq >= IOAPIC_NUM_PINS);
 
@@ -1698,9 +1721,15 @@ int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id,
 
 	last_idx = next_idx;
 
+	/* optimization to reduce PIs to svsm */
+	last_pin_state = !!kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq];
+	asserted = get_pin_state(kvm, irq, irq_source_id, level);
+	if (!asserted && last_pin_state == asserted)
+		return 1;
+
 	irq_event.type = KVM_IRQ_ROUTING_IRQCHIP;
 	irq_event.irqchip.pin = irq;
-	irq_event.irqchip.level = level;
+	irq_event.irqchip.level = asserted;
 	irq_event.irqchip.source_id = irq_source_id;
 
 	ret = tdx_share_irte_info(vcpu, &irq_event);
