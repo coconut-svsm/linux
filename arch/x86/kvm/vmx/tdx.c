@@ -1909,7 +1909,8 @@ static int tdx_mem_page_aug(struct kvm *kvm, gfn_t gfn,
 	u64 err;
 
 	err = tdh_mem_page_aug(kvm_tdx->tdr_pa, gpa, tdx_level, hpa, &out);
-	if (unlikely(err == TDX_ERROR_SEPT_BUSY)) {
+	if (unlikely(err == TDX_ERROR_SEPT_BUSY ||
+		     err == (TDX_OPERAND_BUSY | TDX_OPERAND_ID_RCX))) {
 		tdx_unpin(kvm, pfn, level);
 		return -EAGAIN;
 	}
@@ -1922,6 +1923,14 @@ static int tdx_mem_page_aug(struct kvm *kvm, gfn_t gfn,
 			tdx_unpin(kvm, pfn, level);
 			WARN_ON_ONCE(!(to_kvm_tdx(kvm)->attributes &
 				       TDX_TD_ATTR_SEPT_VE_DISABLE));
+			return -EAGAIN;
+		}
+
+		/* Someone updated the entry to the same value. */
+		if (level_state.level == tdx_level &&
+		    level_state.state == TDX_SEPT_PRESENT &&
+		    entry.leaf && entry.pfn == pfn) {
+			tdx_unpin(kvm, pfn, level);
 			return -EAGAIN;
 		}
 	}
