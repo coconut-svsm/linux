@@ -69,7 +69,15 @@ struct kvm_tdx {
 	 * buffer setup. After this, host can start sharing irq_events.
 	 */
 	struct {
-		u32 num_l2_vcpus;
+		/* Shared page to pass irq event to L1 */
+		struct page *pinned_page;
+		u8 shared_irte_pir;
+		/*
+		 * spinlock to serialize aading an irq event entry to the
+		 * shared page.
+		 */
+		spinlock_t sirte_lock;
+
 		unsigned long ioapic_pin_state[IOAPIC_NUM_PINS];
 	} l2_pt_irq[MAX_NUM_L2_VMS];
 };
@@ -141,8 +149,9 @@ struct shared_irq_event {
 	};
 } __aligned(16);
 
-#define NUM_IRQ_EVENTS					\
-	((PAGE_SIZE - sizeof(struct sirte_header)) /	\
+/* sirte page is set to 8K in size */
+#define NUM_IRQ_EVENTS						\
+	(((2 * PAGE_SIZE) - sizeof(struct sirte_header)) /	\
 	sizeof(struct shared_irq_event))
 struct sirte_page {
 	struct sirte_header sirte_hdr;
@@ -195,14 +204,6 @@ struct vcpu_tdx {
 	struct lbr_desc lbr_desc;
 
 	bool resume_l1;
-
-	/* Shared page to pass irq event to L1 */
-	struct page *pinned_page;
-	u8 shared_irte_pir;
-	/*
-	 * spinlock to serialize the entry of irq event in the shared page.
-	 */
-	spinlock_t sirte_lock;
 };
 
 static inline bool is_td(struct kvm *kvm)
