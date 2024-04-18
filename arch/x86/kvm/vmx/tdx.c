@@ -718,6 +718,7 @@ static void td_partitioning_init(struct kvm_tdx *kvm_tdx)
 	for (i = 0; i < MAX_NUM_L2_VMS; i++) {
 		INIT_LIST_HEAD(&kvm_tdx->l2sept_list[i].head);
 		spin_lock_init(&kvm_tdx->l2sept_list[i].lock);
+		kvm_tdx->l2_pt_irq[i].num_l2_vcpus = 0;
 	}
 }
 
@@ -1569,16 +1570,29 @@ static int tdx_get_td_vm_call_info(struct kvm_vcpu *vcpu)
 	return 1;
 }
 
+bool tdx_is_irq_event_pt(struct kvm *kvm)
+{
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
+
+	/*
+	 * FIXME: Currently SVSM only supports one VM, but layout plumbing
+	 * for multi-L2 VM support.
+	 */
+	return kvm_tdx->l2_pt_irq[0].num_l2_vcpus == kvm->created_vcpus;
+}
+
 static int tdx_handle_shared_irte_header(struct kvm_vcpu *vcpu)
 {
 	gfn_t gfn;
 	gpa_t gpa = tdvmcall_a0_read(vcpu);
+	u64 vm_idx = tdvmcall_a1_read(vcpu);
 	struct page *page;
 	int npages_pinned;
 	unsigned long guest_addr;
 	void *shared_page_vaddr;
 	struct sirte_header sirte_hdr;
 	struct vcpu_tdx *tdx_vcpu = to_tdx(vcpu);
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
 
 	/* shared irte info already initialized, return success */
 	if (tdx_vcpu->pinned_page) {
@@ -1618,6 +1632,12 @@ static int tdx_handle_shared_irte_header(struct kvm_vcpu *vcpu)
 		return 1;
 	}
 	tdx_vcpu->pinned_page = page;
+
+	/*
+	 * FIXME: Currently SVSM only supports one VM, but layout plumbing
+	 * for multi-L2 VM support.
+	 */
+	kvm_tdx->l2_pt_irq[vm_idx].num_l2_vcpus++;
 
 	shared_page_vaddr = page_address(page);
 	if (!shared_page_vaddr) {

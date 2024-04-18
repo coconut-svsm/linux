@@ -1193,6 +1193,8 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 	.gmem_max_level = vt_gmem_max_level,
 	.pre_memory_mapping = vt_pre_memory_mapping,
 	.post_memory_mapping = vt_post_memory_mapping,
+
+	.is_irq_event_pt = tdx_is_irq_event_pt,
 };
 
 struct kvm_x86_init_ops vt_init_ops __initdata = {

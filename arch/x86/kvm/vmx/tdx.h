@@ -58,6 +58,18 @@ struct kvm_tdx {
 		 */
 		spinlock_t lock;
 	} l2sept_list[MAX_NUM_L2_VMS];
+
+	/*
+	 * FIXME: Currently num L1 vcpus = L2 vcpus as we only have one L2 VM.
+	 * But this may not be true when we have multi-L2 VM. In such case L1
+	 * may need to share num of L2 vcpus per VM. Once this is known, the
+	 * number of L2 vcpus per VM becomes relatively straight forward to
+	 * check and confirm if all the L2 vcpus per VM have completed shared
+	 * buffer setup. After this, host can start sharing irq_events.
+	 */
+	struct {
+		u32 num_l2_vcpus;
+	} l2_pt_irq[MAX_NUM_L2_VMS];
 };
 
 union tdx_exit_reason {

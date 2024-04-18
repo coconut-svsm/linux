@@ -1884,6 +1884,7 @@ struct kvm_x86_ops {
 				  u64 *error_code, u8 *max_level);
 	void (*post_memory_mapping)(struct kvm_vcpu *vcpu,
 				    struct kvm_memory_mapping *mapping);
+	bool (*is_irq_event_pt)(struct kvm *kvm);
 };
 
 struct kvm_x86_nested_ops {

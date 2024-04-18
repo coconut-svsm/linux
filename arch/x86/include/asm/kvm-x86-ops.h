@@ -163,6 +163,7 @@ KVM_X86_OP_OPTIONAL_RET0(gmem_max_level)
 KVM_X86_OP_OPTIONAL(gmem_invalidate)
 KVM_X86_OP_OPTIONAL(pre_memory_mapping);
 KVM_X86_OP_OPTIONAL(post_memory_mapping);
+KVM_X86_OP_OPTIONAL(is_irq_event_pt)
 
 #undef KVM_X86_OP
 #undef KVM_X86_OP_OPTIONAL
