@@ -256,6 +256,8 @@ struct vcpu_sev_es_state {
 	struct mutex snp_vmsa_mutex; /* Used to handle concurrent updates of VMSA. */
 
 	struct vmpl_switch_sa vssa;
+
+	gpa_t hvdb_gpa;
 };
 
 struct vcpu_svm {
