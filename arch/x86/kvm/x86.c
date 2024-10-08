@@ -11310,6 +11310,7 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 {
 	int r;
 	struct kvm_vcpu_vmpl_state *vcpu_parent = vcpu->vcpu_parent;
+	int vmpl;
 
 	vcpu->common->run->exit_reason = KVM_EXIT_UNKNOWN;
 
@@ -11334,8 +11335,15 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 		if (kvm_xen_has_pending_events(vcpu))
 			kvm_xen_inject_pending_events(vcpu);
 
-		if (kvm_cpu_has_pending_timer(vcpu))
-			kvm_inject_pending_timer_irqs(vcpu);
+		/*
+		 * Check for pending timer interrupts on all vCPU priorties. We
+		 * will switch to the higher priority VMPL if a pending interrupt
+		 * is ready.
+		 */
+		for (vmpl = 0; vmpl <= vcpu_parent->max_vmpl; ++vmpl) {
+			if (kvm_cpu_has_pending_timer(vcpu_parent->vcpu_vmpl[vmpl]))
+				kvm_inject_pending_timer_irqs(vcpu_parent->vcpu_vmpl[vmpl]);
+		}
 
 		if (dm_request_for_irq_injection(vcpu) &&
 			kvm_vcpu_ready_for_interrupt_injection(vcpu)) {
@@ -11356,6 +11364,12 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 		/* If the exit code results in a VTL switch then let the caller handle it */
 		if (vcpu_parent->target_vmpl != vcpu_parent->current_vmpl)
 			break;
+
+		/* Exit on pending interrupts/events for a higher priority VMPL */
+		if (kvm_x86_call(pending_event_higher_vmpl)(vcpu)) {
+			r = 0;
+			break;
+		}
 	}
 
 	return r;

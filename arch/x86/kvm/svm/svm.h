@@ -800,6 +800,7 @@ static inline bool sev_snp_is_rinj_active(struct kvm_vcpu *vcpu)
 	return sev_snp_guest(vcpu->kvm) &&
 		(sev->vmsa_features[vcpu->vmpl] & SVM_SEV_FEAT_RESTRICTED_INJECTION);
 };
+int sev_pending_event_higher_vmpl(struct kvm_vcpu *vcpu);
 #else
 static inline struct page *snp_safe_alloc_page_node(int node, gfp_t gfp)
 {

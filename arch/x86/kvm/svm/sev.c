@@ -5574,3 +5574,20 @@ bool sev_snp_blocked(enum inject_type type, struct kvm_vcpu *vcpu)
 
 	return blocked;
 }
+
+int sev_pending_event_higher_vmpl(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_vmpl_state *vcpu_parent = vcpu->vcpu_parent;
+
+	/*
+	 * Check to see if VMPL0 has any pending events to process
+	 * if the current VMPL is lower
+	 */
+	if (vcpu->vmpl > 0) {
+		if (kvm_test_request(KVM_REQ_EVENT, vcpu_parent->vcpu_vmpl[0])) {
+			vcpu_parent->target_vmpl = 0;
+			return 1;
+		}
+	}
+	return 0;
+}
