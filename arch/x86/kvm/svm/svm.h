@@ -54,6 +54,7 @@ extern int lbrv;
 
 enum inject_type {
 	INJECT_IRQ,
+	INJECT_NMI,
 };
 
 /*
