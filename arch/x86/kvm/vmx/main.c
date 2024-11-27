@@ -931,6 +931,7 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 	.cancel_injection = vt_op(cancel_injection),
 	.interrupt_allowed = vt_op(interrupt_allowed),
 	.nmi_allowed = vt_op(nmi_allowed),
+	.mce_allowed = vmx_mce_allowed,
 	.get_nmi_mask = vt_op(get_nmi_mask),
 	.set_nmi_mask = vt_op(set_nmi_mask),
 	.enable_nmi_window = vt_op(enable_nmi_window),
