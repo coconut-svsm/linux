@@ -141,6 +141,10 @@ bool tdx_is_vm_type_supported(unsigned long type);
 int tdx_offline_cpu(void);
 
 int tdx_vm_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap);
+bool tdx_is_irq_event_pt(struct kvm *kvm);
+int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id, u32 level);
+int tdx_pt_msi_irq_event(struct kvm *kvm, struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq);
+
 int tdx_vm_init(struct kvm *kvm);
 void tdx_mmu_release_hkid(struct kvm *kvm);
 void tdx_vm_free(struct kvm *kvm);
@@ -259,6 +263,17 @@ int tdx_pre_memory_mapping(struct kvm_vcpu *vcpu,
 	return -EOPNOTSUPP;
 }
 void tdx_post_memory_mapping(struct kvm_vcpu *vcpu, struct kvm_memory_mapping *mapping) {}
+static inline bool tdx_is_irq_event_pt(struct kvm *kvm) { return false; }
+static inline int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id, u32 level)
+{
+	return -EOPNOTSUPP;
+}
+static inline int tdx_pt_msi_irq_event(struct kvm *kvm, struct kvm_vcpu *vcpu,
+				       struct kvm_lapic_irq *irq)
+{
+	return -EOPNOTSUPP;
+}
+
 #endif
 
 #if defined(CONFIG_INTEL_TDX_HOST) && defined(CONFIG_KVM_SMM)

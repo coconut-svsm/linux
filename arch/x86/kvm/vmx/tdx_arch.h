@@ -21,6 +21,7 @@
 #define TDH_MNG_CREATE			9
 #define TDH_VP_CREATE			10
 #define TDH_MNG_RD			11
+#define TDH_MNG_WR			13
 #define TDH_MEM_PAGE_DEMOTE		15
 #define TDH_MR_EXTEND			16
 #define TDH_MR_FINALIZE			17
@@ -45,6 +46,9 @@
 #define TDH_SYS_LP_SHUTDOWN		44
 
 #define TD_EXIT_OTHER_SMI_IS_MSMI	BIT(1)
+
+/* Not defined in GHCI */
+#define TDG_VP_VMCALL_SHARED_IRTE_HDR			0x20001
 
 /* TDX control structure (TDR/TDCS/TDVPS) field access codes */
 #define TDX_NON_ARCH			BIT_ULL(63)
@@ -74,10 +78,22 @@
 
 enum tdx_tdcs_execution_control {
 	TD_TDCS_EXEC_TSC_OFFSET = 10,
+	TD_TDCS_EXEC_VM_CTLS	= 18,
 };
+
+union tdx_tdcs_exec_vm_ctls {
+	struct {
+		u64 ept_violation_on_l2sept	: 1;
+		u64 reserved1_63		: 63;
+	};
+	u64 full;
+};
+
+#define TDX_TDCS_EXEC_VM_CTLS_VALID_MASK	(1ULL)
 
 /* @field is any of enum tdx_tdcs_execution_control */
 #define TDCS_EXEC(field)		BUILD_TDX_FIELD(TD_CLASS_EXECUTION_CONTROLS, (field))
+#define TDCS_EXEC_NON_ARCH(field)	BUILD_TDX_FIELD_NON_ARCH(17, (field))
 
 /* @field is the VMCS field encoding */
 #define TDVPS_VMCS(field)		BUILD_TDX_FIELD(TDVPS_CLASS_VMCS, (field))
@@ -136,7 +152,8 @@ struct td_params {
 	u64 attributes;
 	u64 xfam;
 	u16 max_vcpus;
-	u8 reserved0[6];
+	u8 num_l2_vms;
+	u8 reserved0[5];
 
 	u64 eptp_controls;
 	u64 exec_controls;
@@ -231,7 +248,9 @@ union tdx_ext_exit_qualification {
 		u64 err_sept_level	:  3;
 		u64 err_sept_state	:  8;
 		u64 err_sept_is_leaf	:  1;
-		u64 reserved1		: 17;
+		u64 reserved1		:  5;
+		u64 vm_id		:  2;
+		u64 reserved2		: 10;
 	};
 	u64 full;
 };
@@ -239,7 +258,28 @@ union tdx_ext_exit_qualification {
 enum tdx_ext_exit_qualification_type {
 	EXT_EXIT_QUAL_NONE = 0,
 	EXT_EXIT_QUAL_ACCEPT = 1,
-	NUM_EXT_EXIT_QUAL,
+	EXT_EXIT_QUAL_GPA_DETAILS = 2,
+	EXT_EXIT_ATTR_WR = 5,
+};
+
+union tdx_exit_info {
+	struct {
+		u64 exit_qual		: 32;
+		u64 vm			: 2;
+		u64 reserved34_63	: 30;
+	};
+	u64 full;
+};
+
+union tdx_vpenter_handle_flags {
+	struct {
+		u64 reserved0_11	: 12;
+		u64 tdvpr_hpa		: 40;
+		u64 host_recover_hint	: 1;
+		u64 resume_l1		: 1;
+		u64 reserved54_63	: 10;
+	};
+	u64 full;
 };
 
 /*
@@ -254,13 +294,16 @@ enum tdx_ext_exit_qualification_type {
 #define MD_FIELD_ID_XFAM_FIXED1			0x1900000300000003ULL
 
 #define MD_FIELD_ID_TDCS_BASE_SIZE		0x9800000100000100ULL
+#define MD_FIELD_ID_TDCS_SIZE_PER_L2_VM		0x9800000100000101ULL
 #define MD_FIELD_ID_TDVPS_BASE_SIZE		0x9800000100000200ULL
+#define MD_FIELD_ID_TDVPS_SIZE_PER_L2_VM	0x9800000100000201ULL
 
 #define MD_FIELD_ID_NUM_CPUID_CONFIG		0x9900000100000004ULL
 #define MD_FIELD_ID_CPUID_CONFIG_LEAVES		0x9900000300000400ULL
 #define MD_FIELD_ID_CPUID_CONFIG_VALUES		0x9900000300000500ULL
 
 #define MD_FIELD_ID_FEATURES0_NO_RBP_MOD	BIT_ULL(18)
+#define MD_FIELD_ID_FEATURES0_TD_PARTITIONING	BIT_ULL(7)
 
 #define TDX_MAX_NR_CPUID_CONFIGS       37
 
@@ -290,5 +333,22 @@ union tdx_md_field_id {
 #define TDX_MD_ELEMENT_SIZE_CODE(_field_id)			\
 	({ union tdx_md_field_id _fid = { .raw = (_field_id)};  \
 		_fid.element_size_code; })
+
+enum tdp_vm_id {
+	TDP_VM_1 = 1,
+	TDP_VM_2,
+	TDP_VM_3,
+
+	MAX_NUM_L2_VMS = TDP_VM_3,
+};
+
+static inline bool is_tdp_vm_id(enum tdp_vm_id vm_id)
+{
+	return (vm_id >= TDP_VM_1) && (vm_id <= TDP_VM_3);
+}
+
+#define TDVPS_L2VMCS_1_CLASS_CODE	36
+#define L2VMCS_CLASS(vm)		(TDVPS_L2VMCS_1_CLASS_CODE + vm * 8)
+#define L2VMCS_FIELD(vm, field)		BUILD_TDX_FIELD(L2VMCS_CLASS(vm), field)
 
 #endif /* __KVM_X86_TDX_ARCH_H */

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/cpu.h>
 #include <linux/mmu_context.h>
+#include <linux/bitops.h>
 
 #include <asm/fpu/xcr.h>
 #include <asm/tdx.h>
@@ -19,6 +20,12 @@
 
 #undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
+static struct kmem_cache *l2sept_header_cache;
+struct l2sept_header {
+	struct list_head node;
+	unsigned long page_va;
+};
 
 /*
  * Key id globally used by TDX module: TDX module maps TDR with this TDX global
@@ -57,6 +64,10 @@ struct tdx_info {
 
 	u8 nr_tdcs_pages;
 	u8 nr_tdvpx_pages;
+
+	u8 max_num_l2_vms;
+	u8 nr_tdcs_pages_per_l2_vm;
+	u8 nr_tdvpx_pages_per_l2_vm;
 
 	u16 num_cpuid_config;
 	/* This must the last member. */
@@ -200,6 +211,110 @@ static inline bool is_hkid_assigned(struct kvm_tdx *kvm_tdx)
 static inline bool is_td_finalized(struct kvm_tdx *kvm_tdx)
 {
 	return kvm_tdx->finalized;
+}
+
+
+static inline bool is_eeq_type_supported(enum tdx_ext_exit_qualification_type type)
+{
+	switch (type) {
+	case EXT_EXIT_QUAL_NONE:
+	case EXT_EXIT_QUAL_ACCEPT:
+	case EXT_EXIT_QUAL_GPA_DETAILS:
+	case EXT_EXIT_ATTR_WR:
+		return true;
+	}
+
+	return false;
+}
+
+static inline bool is_valid_tdp_vm_id(struct kvm *kvm, enum tdp_vm_id vm_id)
+{
+	return (vm_id <= to_kvm_tdx(kvm)->num_l2_vms) ? is_tdp_vm_id(vm_id) : false;
+}
+
+static inline bool is_l2vmexit(struct kvm_vcpu *vcpu)
+{
+	union tdx_exit_info exit_info = { .full = tdexit_exit_qual(vcpu) };
+
+	return is_valid_tdp_vm_id(vcpu->kvm, exit_info.vm);
+}
+
+static inline hpa_t l2sept_hpa_from_output(struct kvm *kvm, enum tdp_vm_id vm_id,
+					   struct tdx_module_args *out)
+{
+	/*
+	 * Out.R8 contains the corresponding HPA information for
+	 * L1 VM, and Out.R9/R10/R11 contains the corresponding
+	 * HPA information of L2 VM#1/VM#2/VM#3.
+	 */
+	switch (vm_id) {
+	case TDP_VM_1:
+		return out->r9;
+	case TDP_VM_2:
+		return out->r10;
+	case TDP_VM_3:
+		return out->r11;
+	default:
+		break;
+	}
+
+	KVM_BUG_ON(1, kvm);
+	return INVALID_PAGE;
+}
+
+static struct l2sept_header *allocate_l2sept_header(void)
+{
+	struct l2sept_header *header;
+
+	if (WARN_ON_ONCE(!l2sept_header_cache))
+		return NULL;
+
+	header = kmem_cache_alloc(l2sept_header_cache, GFP_KERNEL_ACCOUNT);
+	if (!header)
+		return NULL;
+
+	header->page_va = __get_free_page(GFP_KERNEL_ACCOUNT);
+	if (!header->page_va) {
+		kmem_cache_free(l2sept_header_cache, header);
+		return NULL;
+	}
+
+	set_page_private(virt_to_page(header->page_va), (unsigned long)header);
+	return header;
+}
+
+static void free_l2sept_header(struct l2sept_header *header)
+{
+	free_page(header->page_va);
+	kmem_cache_free(l2sept_header_cache, header);
+}
+
+static void add_l2sept_header(struct kvm *kvm, enum tdp_vm_id vm_id,
+			      struct l2sept_header *header)
+{
+	int i;
+
+	if (KVM_BUG_ON(!is_valid_tdp_vm_id(kvm, vm_id), kvm))
+		return;
+
+	i = tdp_vm_id_to_index(vm_id);
+	spin_lock(&to_kvm_tdx(kvm)->l2sept_list[i].lock);
+	list_add(&header->node, &to_kvm_tdx(kvm)->l2sept_list[i].head);
+	spin_unlock(&to_kvm_tdx(kvm)->l2sept_list[i].lock);
+}
+
+static void del_l2sept_header(struct kvm *kvm, enum tdp_vm_id vm_id,
+			      struct l2sept_header *header)
+{
+	int i;
+
+	if (KVM_BUG_ON(!is_valid_tdp_vm_id(kvm, vm_id), kvm))
+		return;
+
+	i = tdp_vm_id_to_index(vm_id);
+	spin_lock(&to_kvm_tdx(kvm)->l2sept_list[i].lock);
+	list_del(&header->node);
+	spin_unlock(&to_kvm_tdx(kvm)->l2sept_list[i].lock);
 }
 
 static inline void tdx_disassociate_vp(struct kvm_vcpu *vcpu)
@@ -508,6 +623,23 @@ void tdx_mmu_release_hkid(struct kvm *kvm)
 		;
 }
 
+static void td_partitioning_cleanup(struct kvm_tdx *kvm_tdx)
+{
+	struct l2sept_header *p, *n;
+	struct list_head *head;
+	int i;
+
+	for (i = 0; i < MAX_NUM_L2_VMS; i++) {
+		head = &kvm_tdx->l2sept_list[i].head;
+		list_for_each_entry_safe(p, n, head, node) {
+			if (WARN_ON(tdx_reclaim_page(__pa(p->page_va), PG_LEVEL_4K)))
+				continue;
+			list_del(&p->node);
+			free_l2sept_header(p);
+		}
+	}
+}
+
 void tdx_vm_free(struct kvm *kvm)
 {
 	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
@@ -522,8 +654,10 @@ void tdx_vm_free(struct kvm *kvm)
 	if (is_hkid_assigned(kvm_tdx))
 		return;
 
+	td_partitioning_cleanup(kvm_tdx);
+
 	if (kvm_tdx->tdcs_pa) {
-		for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
+		for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
 			if (kvm_tdx->tdcs_pa[i])
 				tdx_reclaim_control_page(kvm_tdx->tdcs_pa[i]);
 		}
@@ -578,6 +712,19 @@ static int tdx_do_tdh_mng_key_config(void *param)
 	return 0;
 }
 
+static void td_partitioning_init(struct kvm_tdx *kvm_tdx)
+{
+	int i;
+
+	for (i = 0; i < MAX_NUM_L2_VMS; i++) {
+		INIT_LIST_HEAD(&kvm_tdx->l2sept_list[i].head);
+		spin_lock_init(&kvm_tdx->l2sept_list[i].lock);
+		kvm_tdx->l2_pt_irq[i].pinned_page = NULL;
+		memset(&kvm_tdx->l2_pt_irq[i].ioapic_pin_state, 0,
+		       sizeof(kvm_tdx->l2_pt_irq[i].ioapic_pin_state));
+	}
+}
+
 int tdx_vm_init(struct kvm *kvm)
 {
 	/*
@@ -606,6 +753,9 @@ int tdx_vm_init(struct kvm *kvm)
 	kvm->max_vcpus = min(kvm->max_vcpus, TDX_MAX_VCPUS);
 
 	mutex_init(&to_kvm_tdx(kvm)->source_lock);
+
+	td_partitioning_init(to_kvm_tdx(kvm));
+
 	return 0;
 }
 
@@ -774,6 +924,7 @@ void tdx_vcpu_put(struct kvm_vcpu *vcpu)
 
 void tdx_vcpu_free(struct kvm_vcpu *vcpu)
 {
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
 	struct vcpu_tdx *tdx = to_tdx(vcpu);
 	int i;
 
@@ -799,7 +950,7 @@ void tdx_vcpu_free(struct kvm_vcpu *vcpu)
 	}
 
 	if (tdx->tdvpx_pa) {
-		for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
+		for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
 			if (tdx->tdvpx_pa[i])
 				tdx_reclaim_control_page(tdx->tdvpx_pa[i]);
 		}
@@ -883,6 +1034,7 @@ static void tdx_restore_host_xsave_state(struct kvm_vcpu *vcpu)
 
 static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
 {
+	union tdx_vpenter_handle_flags handle_flags = { .full = tdx->tdvpr_pa };
 	struct tdx_module_args args;
 
 	/*
@@ -890,6 +1042,11 @@ static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
 	 * should call to_tdx().
 	 */
 	struct kvm_vcpu *vcpu = &tdx->vcpu;
+
+	if (tdx->resume_l1) {
+		handle_flags.resume_l1 = 1;
+		tdx->resume_l1 = false;
+	}
 
 	guest_state_enter_irqoff();
 
@@ -900,7 +1057,7 @@ static noinstr void tdx_vcpu_enter_exit(struct vcpu_tdx *tdx)
 	 *   which means TDG.VP.VMCALL.
 	 */
 	args = (struct tdx_module_args) {
-		.rcx = tdx->tdvpr_pa,
+		.rcx = handle_flags.full,
 #define REG(reg, REG)	.reg = vcpu->arch.regs[VCPU_REGS_ ## REG]
 		REG(rdx, RDX),
 		REG(r8,  R8),
@@ -962,6 +1119,9 @@ fastpath_t tdx_vcpu_run(struct kvm_vcpu *vcpu)
 
 	if (pi_test_on(&tdx->pi_desc)) {
 		apic->send_IPI_self(POSTED_INTR_VECTOR);
+
+		if (is_l2vmexit(vcpu))
+			tdx->resume_l1 = true;
 
 		kvm_wait_lapic_expire(vcpu);
 	}
@@ -1413,10 +1573,272 @@ static int tdx_get_td_vm_call_info(struct kvm_vcpu *vcpu)
 	return 1;
 }
 
+static u32 tdx_sirte_put(struct meta_data *mdata,
+			 struct shared_irq_event *addr, void *data)
+{
+	void *to;
+	u32 next_tail;
+	u32 cur_tail;
+	u32 cur_head;
+	u32 elem_size;
+
+	cur_head = mdata->head;
+	cur_tail = mdata->tail;
+	next_tail = ((cur_tail + 1) >= mdata->num_elem) ? 0 : cur_tail + 1;
+
+	if (next_tail == cur_head) {
+		/* overrun is not supported, return 0 directly */
+		elem_size = 0U;
+	} else {
+		to = (void *)&addr[cur_tail];
+
+		memcpy(to, data, mdata->elem_size);
+		/* Ensure data is copied to the shared buffer before updating tail. */
+		__wmb();
+
+		mdata->tail = next_tail;
+		elem_size = mdata->elem_size;
+	}
+
+	return elem_size;
+}
+
+static int tdx_share_irte_info(struct kvm_vcpu *vcpu,
+			       struct shared_irq_event *irq_event)
+{
+	int ret;
+	void *pinned_page;
+	struct sirte_page *sirte_base;
+	struct kvm_lapic *apic;
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
+
+	if (!kvm_tdx->l2_pt_irq[0].pinned_page) {
+		pr_err("%s: no shared memory available!", __func__);
+		return -1;
+	}
+
+	pinned_page = page_address(kvm_tdx->l2_pt_irq[0].pinned_page);
+	sirte_base = (struct sirte_page *)pinned_page;
+
+	spin_lock(&kvm_tdx->l2_pt_irq[0].sirte_lock);
+	ret = tdx_sirte_put(&sirte_base->sirte_hdr.mdata, sirte_base->data,
+			    (void *)irq_event);
+	spin_unlock(&kvm_tdx->l2_pt_irq[0].sirte_lock);
+
+	if (!ret) {
+		pr_err("%s: shared buf is full!", __func__);
+		ret = -1;
+		goto out;
+	}
+
+	/*
+	 * We always return 1 to userspace as host doesn't know the RTE entry
+	 * for the pin to know if it is a edge or level triggered interrupt
+	 * and also the remote irr status.
+	 */
+	ret = 1;
+out:
+	apic = vcpu->arch.apic;
+	/* delivery_mode and trig_mode are *NOT* used so setting 0 */
+	tdx_deliver_interrupt(apic, 0, 0,
+			      kvm_tdx->l2_pt_irq[0].shared_irte_pir);
+
+	return ret;
+}
+
+int tdx_pt_msi_irq_event(struct kvm *kvm, struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq)
+{
+	int ret;
+	struct shared_irq_event irq_event;
+
+	/* Not expecting reserved vectors here */
+	ASSERT(irq->vector < 32);
+
+	irq_event.type = KVM_IRQ_ROUTING_MSI;
+	irq_event.msi.vector = irq->vector;
+	irq_event.msi.delivery_mode = irq->delivery_mode;
+	irq_event.msi.dest_mode = (irq->dest_mode == APIC_DEST_LOGICAL);
+	irq_event.msi.trig_mode = irq->trig_mode;
+	irq_event.msi.dest_id = irq->dest_id;
+
+	ret = tdx_share_irte_info(vcpu, &irq_event);
+
+	return ret;
+}
+
+/* rotate vcpu selection to inject ioapic interrupt to SVSM */
+static inline u32 tdx_find_next_vcpu(u32 last_vcpu, u32 max_vcpu)
+{
+	u32 next_vcpu = last_vcpu + 1;
+
+	return next_vcpu % max_vcpu;
+}
+
+static bool get_pin_state(struct kvm *kvm, u32 irq, u32 irq_source_id,
+			  u32 level)
+{
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
+
+	if (level != 0) {
+		kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq] |= 1 << irq_source_id;
+		__set_bit(irq_source_id,
+			  &kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq]);
+	} else {
+		__clear_bit(irq_source_id,
+			    &kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq]);
+	}
+
+	return !!kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq];
+}
+
+int tdx_pt_ioapic_irq_event(struct kvm *kvm, u32 irq, u32 irq_source_id,
+			    u32 level)
+{
+	int ret;
+	struct shared_irq_event irq_event;
+	struct kvm_vcpu *vcpu;
+	static u32 last_idx;
+	u32 next_idx;
+	bool asserted;
+	u32 last_pin_state;
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
+
+	ASSERT(irq >= IOAPIC_NUM_PINS);
+
+	/*
+	 * FIXME: Current implementation doesn't support KVM_IRQFD_RESAMPLE_IRQ_SOURCE_ID
+	 * as we don't send an EOI back to host. But this will be fixed in future.
+	 * Until then catch this case with an assert.
+	 */
+	ASSERT(irq_source_id == KVM_IRQFD_RESAMPLE_IRQ_SOURCE_ID);
+
+	next_idx =
+		tdx_find_next_vcpu(last_idx, atomic_read(&kvm->online_vcpus));
+	vcpu = kvm_get_vcpu(kvm, next_idx);
+	if (!vcpu) {
+		pr_err("%s: vcpu not found!", __func__);
+		return -1;
+	}
+
+	last_idx = next_idx;
+
+	/* optimization to reduce PIs to svsm */
+	last_pin_state = !!kvm_tdx->l2_pt_irq[0].ioapic_pin_state[irq];
+	asserted = get_pin_state(kvm, irq, irq_source_id, level);
+	if (!asserted && last_pin_state == asserted)
+		return 1;
+
+	irq_event.type = KVM_IRQ_ROUTING_IRQCHIP;
+	irq_event.irqchip.pin = irq;
+	irq_event.irqchip.level = asserted;
+	irq_event.irqchip.source_id = irq_source_id;
+
+	ret = tdx_share_irte_info(vcpu, &irq_event);
+	return ret;
+}
+
+bool tdx_is_irq_event_pt(struct kvm *kvm)
+{
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(kvm);
+
+	/*
+	 * FIXME: Currently SVSM only supports one VM, but layout plumbing
+	 * for multi-L2 VM support.
+	 */
+	return !!kvm_tdx->l2_pt_irq[0].pinned_page;
+}
+
+static int tdx_handle_shared_irte_header(struct kvm_vcpu *vcpu)
+{
+	gfn_t gfn;
+	gpa_t gpa = tdvmcall_a0_read(vcpu);
+	u64 vm_idx = tdvmcall_a1_read(vcpu);
+	u64 num_shared_pages = tdvmcall_a2_read(vcpu);
+	struct page *page;
+	int npages_pinned;
+	unsigned long guest_addr;
+	void *shared_page_vaddr;
+	struct sirte_header sirte_hdr;
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
+
+	/* shared irte info already initialized, return success */
+	if (kvm_tdx->l2_pt_irq[0].pinned_page) {
+		tdvmcall_set_return_code(vcpu, TDVMCALL_SUCCESS);
+		return 1;
+	}
+
+	gfn = gpa_to_gfn(gpa) & ~kvm_gfn_shared_mask(vcpu->kvm);
+	if (!gfn) {
+		pr_err("%s: gpa to gfn failed! gfn 0x%llx gpa 0x%llx\n",
+		       __func__, gfn, gpa);
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+
+	if (kvm_mem_is_private(vcpu->kvm, gfn)) {
+		pr_err("%s: private gfn 0x%llx gpa 0x%llx\n", __func__, gfn,
+		       gpa);
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+
+	page = kzalloc(sizeof(*page), GFP_KERNEL);
+	if (!page) {
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+
+	guest_addr = kvm_vcpu_gfn_to_hva(vcpu, gfn);
+	npages_pinned = pin_user_pages_fast(guest_addr, num_shared_pages,
+					    FOLL_WRITE | FOLL_NOFAULT | FOLL_LONGTERM,
+					    &page);
+	if (npages_pinned != num_shared_pages) {
+		pr_err("%s: Failed to pin shared irte page, npage_pinned = %d",
+		       __func__, npages_pinned);
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+	kvm_tdx->l2_pt_irq[vm_idx].pinned_page = page;
+
+	/* Init lock for the sirte page */
+	spin_lock_init(&kvm_tdx->l2_pt_irq[vm_idx].sirte_lock);
+
+	shared_page_vaddr = page_address(page);
+	if (!shared_page_vaddr) {
+		pr_err("%s: invalid shared_irte_hva\n", __func__);
+		tdvmcall_set_return_code(vcpu, TDVMCALL_INVALID_OPERAND);
+		return 1;
+	}
+
+	/* Copy the first entry from the shared page to get the L1 PIR */
+	memcpy((void *)&sirte_hdr, shared_page_vaddr,
+	       sizeof(struct sirte_header));
+	kvm_tdx->l2_pt_irq[vm_idx].shared_irte_pir = sirte_hdr.pir;
+
+	tdvmcall_set_return_code(vcpu, TDVMCALL_SUCCESS);
+	return 1;
+}
+
 static int handle_tdvmcall(struct kvm_vcpu *vcpu)
 {
 	if (tdvmcall_exit_type(vcpu))
 		return tdx_emulate_vmcall(vcpu);
+
+	if (is_l2vmexit(vcpu)) {
+		switch (tdvmcall_leaf(vcpu)) {
+		/*
+		 * L2 may access the virt device emulated by
+		 * host VMM with tdvmcall MMIO request. Host
+		 * vmm can directly emulate such MMIO.
+		 */
+		case EXIT_REASON_EPT_VIOLATION:
+			break;
+		/* Resume L1 to handle the other tdvmcalls from L2 */
+		default:
+			to_tdx(vcpu)->resume_l1 = true;
+			return 1;
+		}
+	}
 
 	switch (tdvmcall_leaf(vcpu)) {
 	case EXIT_REASON_CPUID:
@@ -1433,6 +1855,8 @@ static int handle_tdvmcall(struct kvm_vcpu *vcpu)
 		return tdx_emulate_wrmsr(vcpu);
 	case TDVMCALL_GET_TD_VM_CALL_INFO:
 		return tdx_get_td_vm_call_info(vcpu);
+	case TDG_VP_VMCALL_SHARED_IRTE_HDR:
+		return tdx_handle_shared_irte_header(vcpu);
 	default:
 		break;
 	}
@@ -1450,8 +1874,13 @@ static int handle_tdvmcall(struct kvm_vcpu *vcpu)
 
 void tdx_load_mmu_pgd(struct kvm_vcpu *vcpu, hpa_t root_hpa, int pgd_level)
 {
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
+	int i;
+
 	WARN_ON_ONCE(root_hpa & ~PAGE_MASK);
 	td_vmcs_write64(to_tdx(vcpu), SHARED_EPT_POINTER, root_hpa);
+	for (i = 0; i < kvm_tdx->num_l2_vms; i++)
+		l2td_vmcs_write64(to_tdx(vcpu), SHARED_EPT_POINTER, root_hpa, i);
 }
 
 static void tdx_unpin(struct kvm *kvm, kvm_pfn_t pfn, enum pg_level level)
@@ -1475,7 +1904,8 @@ static int tdx_mem_page_aug(struct kvm *kvm, gfn_t gfn,
 	u64 err;
 
 	err = tdh_mem_page_aug(kvm_tdx->tdr_pa, gpa, tdx_level, hpa, &out);
-	if (unlikely(err == TDX_ERROR_SEPT_BUSY)) {
+	if (unlikely(err == TDX_ERROR_SEPT_BUSY ||
+		     err == (TDX_OPERAND_BUSY | TDX_OPERAND_ID_RCX))) {
 		tdx_unpin(kvm, pfn, level);
 		return -EAGAIN;
 	}
@@ -1488,6 +1918,14 @@ static int tdx_mem_page_aug(struct kvm *kvm, gfn_t gfn,
 			tdx_unpin(kvm, pfn, level);
 			WARN_ON_ONCE(!(to_kvm_tdx(kvm)->attributes &
 				       TDX_TD_ATTR_SEPT_VE_DISABLE));
+			return -EAGAIN;
+		}
+
+		/* Someone updated the entry to the same value. */
+		if (level_state.level == tdx_level &&
+		    level_state.state == TDX_SEPT_PRESENT &&
+		    entry.leaf && entry.pfn == pfn) {
+			tdx_unpin(kvm, pfn, level);
 			return -EAGAIN;
 		}
 	}
@@ -1904,6 +2342,91 @@ void tdx_deliver_interrupt(struct kvm_lapic *apic, int delivery_mode,
 	__vmx_deliver_posted_interrupt(vcpu, &tdx->pi_desc, vector);
 }
 
+static int tdx_handle_l2sept_walking_failure(struct kvm_vcpu *vcpu, int tdx_level,
+					     enum tdp_vm_id vm_id)
+{
+	hpa_t l2sept_hpa[MAX_NUM_L2_VMS] = { [0 ... (MAX_NUM_L2_VMS - 1)] = INVALID_PAGE };
+	gpa_t gpa = tdexit_gpa(vcpu) & KVM_HPAGE_MASK(tdx_sept_level_to_pg_level(tdx_level));
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
+	struct l2sept_header *header;
+	struct tdx_module_args out;
+	hpa_t consumed_hpa, hpa;
+	u64 err;
+	int ret;
+
+	BUILD_BUG_ON(MAX_NUM_L2_VMS != 3);
+
+	/* Make sure the vm_id for a L2 VM is valid */
+	if (!is_valid_tdp_vm_id(vcpu->kvm, vm_id))
+		return -EINVAL;
+
+	header = allocate_l2sept_header();
+	if (!header)
+		return -ENOMEM;
+
+	/*
+	 * The l2 sept adding sequence is to add l2sept header to the list
+	 * first and then add the page to TDX module. Doing so is in pair with
+	 * the l2 sept removing sequence, which remove the page from TDX module
+	 * first and then delete l2sept header.
+	 */
+	add_l2sept_header(vcpu->kvm, vm_id, header);
+
+	/*
+	 * Allocate page for TDX module to build L2 SEPT tree
+	 * on the required level by using TDH.MEM.SEPT.ADD
+	 * version1 interface.
+	 */
+	hpa = __pa(header->page_va);
+	l2sept_hpa[tdp_vm_id_to_index(vm_id)] = hpa;
+	do {
+		/*
+		 * Use SEPT_ADD_ALLOW_EXISTING to avoid reporting error in case
+		 * the L2 SEPT paging page is just added by another CPU. The
+		 * SEPT_NOT_USED_MASK will be set to the HPA in the output.
+		 */
+		err = tdh_mem_l2sept_add(kvm_tdx->tdr_pa | SEPT_ADD_ALLOW_EXISTING,
+					 gpa, tdx_level, l2sept_hpa[0],
+					 l2sept_hpa[1], l2sept_hpa[2], &out);
+		/*
+		 * Simply retry TDH.MEM.SEPT.ADD by reusing every parameter
+		 * is fine as it was adding only one valid L2 SEPT paging page.
+		 */
+	} while (err == TDX_INTERRUPTED_RESUMABLE);
+
+	if (TDX_SEAMCALL_ERR_RECOVERABLE(err)) {
+		/* Retry for the recoverable error */
+		ret = 1;
+		goto free;
+	} else if (KVM_BUG_ON(err, vcpu->kvm)) {
+		pr_tdx_error(TDH_MEM_SEPT_ADD, err, &out);
+		ret = -EIO;
+		goto free;
+	}
+
+	consumed_hpa = l2sept_hpa_from_output(vcpu->kvm, vm_id, &out);
+	if (consumed_hpa == -1ULL) {
+		/*
+		 * TDH.MEM.SEPT.ADD returns -1ULL if the HPA is consumed
+		 * as a SEPT paging page
+		 */
+		return 1;
+	} else if (consumed_hpa == (hpa | SEPT_NOT_USED_MASK)) {
+		/* SEPT already added */
+		ret = 1;
+	} else {
+		pr_err("%s: failed to add L2 SEPT page 0x%llx: output: 0x%llx\n",
+		       __func__, hpa, consumed_hpa);
+		KVM_BUG_ON(1, vcpu->kvm);
+		ret = -EIO;
+	}
+
+free:
+	del_l2sept_header(vcpu->kvm, vm_id, header);
+	free_l2sept_header(header);
+	return ret;
+}
+
 static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
 {
 	union tdx_ext_exit_qualification ext_exit_qual;
@@ -1912,13 +2435,52 @@ static int tdx_handle_ept_violation(struct kvm_vcpu *vcpu)
 
 	ext_exit_qual.full = tdexit_ext_exit_qual(vcpu);
 
-	if (ext_exit_qual.type >= NUM_EXT_EXIT_QUAL) {
+	if (!is_eeq_type_supported(ext_exit_qual.type)) {
 		pr_err("EPT violation at gpa 0x%lx, with invalid ext exit qualification type 0x%x\n",
 			tdexit_gpa(vcpu), ext_exit_qual.type);
 		kvm_vm_bugged(vcpu->kvm);
 		return 0;
-	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_ACCEPT) {
+	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_ACCEPT ||
+		   ext_exit_qual.type == EXT_EXIT_ATTR_WR) {
 		err_page_level = tdx_sept_level_to_pg_level(ext_exit_qual.req_sept_level);
+	} else if (ext_exit_qual.type == EXT_EXIT_QUAL_GPA_DETAILS) {
+		enum tdp_vm_id vm_id = ext_exit_qual.vm_id;
+
+		if (KVM_BUG_ON(!is_valid_tdp_vm_id(vcpu->kvm, vm_id), vcpu->kvm)) {
+			pr_err("EPT violation with invalid vm_id %d\n", vm_id);
+			return 0;
+		}
+		err_page_level = ext_exit_qual.err_sept_level;
+		return tdx_handle_l2sept_walking_failure(vcpu, err_page_level, vm_id);
+	}
+
+	if (is_l2vmexit(vcpu)) {
+		gfn_t gfn = gpa_to_gfn(tdexit_gpa(vcpu)) & ~kvm_gfn_shared_mask(vcpu->kvm);
+		struct kvm_memory_slot *slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+
+		if (!slot) {
+			/*
+			 * An EPT violation caused by L2 GPA without backing
+			 * memory means this is for L2 MMIO. Let L1 VMM to handle.
+			 */
+			to_tdx(vcpu)->resume_l1 = true;
+			return 1;
+		}
+		/*
+		 * When L2 accesses a private page that isn't mapped in L1 TD's
+		 * SEPT, it triggers an EPT violation for the host VMM, which
+		 * can be handled by the TD ept violation handling process. A
+		 * private page may not be set to TD's SEPT within one vmexit
+		 * cycle if e.g., page fault stale is happened. We can enter L2
+		 * to retry but this means the same L2 instruction will be
+		 * intercepted again by EPT violation vmexit. If this retry
+		 * process is repeated excessively, TDX module may identify it
+		 * as a zero-step attack. So instead of entering L2 to intercept
+		 * the same instruction again, resuming L1 to do the next level
+		 * handling as eventually the private page can be mapped during
+		 * L1 adding page alias for L2.
+		 */
+		to_tdx(vcpu)->resume_l1 = kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu));
 	}
 
 	if (kvm_is_private_gpa(vcpu->kvm, tdexit_gpa(vcpu))) {
@@ -2322,7 +2884,8 @@ static int tdx_get_capabilities(struct kvm_tdx_cmd *cmd)
 		((kvm_get_shadow_phys_bits() >= 52 &&
 		  cpu_has_vmx_ept_5levels()) ? TDX_CAP_GPAW_52 : 0),
 		.nr_cpuid_configs = tdx_info->num_cpuid_config,
-		.padding = 0,
+		.max_num_l2_vms = tdx_info->max_num_l2_vms,
+		.padding = {0},
 	};
 
 	if (copy_to_user(user_caps, caps, sizeof(*caps))) {
@@ -2501,6 +3064,13 @@ static int setup_tdparams(struct kvm *kvm, struct td_params *td_params,
 	if (ret)
 		return ret;
 
+	if (init_vm->num_l2_vms > tdx_info->max_num_l2_vms) {
+		pr_err("TDX: Invalid num_l2_vms %d, maximum %d\n",
+		       init_vm->num_l2_vms, tdx_info->max_num_l2_vms);
+		return -EOPNOTSUPP;
+	}
+	td_params->num_l2_vms = init_vm->num_l2_vms;
+
 #define MEMCPY_SAME_SIZE(dst, src)				\
 	do {							\
 		BUILD_BUG_ON(sizeof(dst) != sizeof(src));	\
@@ -2539,11 +3109,21 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
 		goto free_hkid;
 	tdr_pa = __pa(va);
 
-	tdcs_pa = kcalloc(tdx_info->nr_tdcs_pages, sizeof(*kvm_tdx->tdcs_pa),
+	kvm_tdx->num_l2_vms = td_params->num_l2_vms;
+	/*
+	 * Count the tdcs/tdvps pages according to the number of L2
+	 * VMs.
+	 */
+	kvm_tdx->nr_tdcs_pages = tdx_info->nr_tdcs_pages +
+				 kvm_tdx->num_l2_vms * tdx_info->nr_tdcs_pages_per_l2_vm;
+	kvm_tdx->nr_tdvpx_pages = tdx_info->nr_tdvpx_pages +
+				  kvm_tdx->num_l2_vms * tdx_info->nr_tdvpx_pages_per_l2_vm;
+
+	tdcs_pa = kcalloc(kvm_tdx->nr_tdcs_pages, sizeof(*kvm_tdx->tdcs_pa),
 			  GFP_KERNEL_ACCOUNT | __GFP_ZERO);
 	if (!tdcs_pa)
 		goto free_tdr;
-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
 		va = __get_free_page(GFP_KERNEL_ACCOUNT);
 		if (!va)
 			goto free_tdcs;
@@ -2629,7 +3209,7 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
 	}
 
 	kvm_tdx->tdcs_pa = tdcs_pa;
-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
 		err = tdh_mng_addcx(kvm_tdx->tdr_pa, tdcs_pa[i]);
 		if (err == TDX_RND_NO_ENTROPY) {
 			/* Here it's hard to allow userspace to retry. */
@@ -2662,6 +3242,21 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
 
 	kvm_set_apicv_inhibit(kvm, APICV_INHIBIT_REASON_TDX);
 
+	for (i = 0; i < kvm_tdx->num_l2_vms; i++) {
+		enum tdp_vm_id vm_id = index_to_tdp_vm_id(i);
+		union tdx_tdcs_exec_vm_ctls vm_ctls = { .full = 0 };
+
+		vm_ctls.ept_violation_on_l2sept = 1;
+		err = tdh_mng_wr(kvm_tdx->tdr_pa,
+				 TDCS_EXEC_NON_ARCH(TD_TDCS_EXEC_VM_CTLS + vm_id),
+				 vm_ctls.full, TDX_TDCS_EXEC_VM_CTLS_VALID_MASK, &out);
+		if (WARN_ON_ONCE(err)) {
+			pr_tdx_error(TDH_MNG_WR, err, &out);
+			ret = -EIO;
+			goto teardown;
+		}
+	}
+
 	return 0;
 
 	/*
@@ -2671,7 +3266,7 @@ static int __tdx_td_init(struct kvm *kvm, struct td_params *td_params,
 	 * with partial initialization.
 	 */
 teardown:
-	for (; i < tdx_info->nr_tdcs_pages; i++) {
+	for (; i < kvm_tdx->nr_tdcs_pages; i++) {
 		if (tdcs_pa[i]) {
 			free_page((unsigned long)__va(tdcs_pa[i]));
 			tdcs_pa[i] = 0;
@@ -2687,7 +3282,7 @@ free_packages:
 	cpus_read_unlock();
 	free_cpumask_var(packages);
 free_tdcs:
-	for (i = 0; i < tdx_info->nr_tdcs_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdcs_pages; i++) {
 		if (tdcs_pa[i])
 			free_page((unsigned long)__va(tdcs_pa[i]));
 	}
@@ -2964,13 +3559,13 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
 		return -ENOMEM;
 	tdvpr_pa = __pa(va);
 
-	tdvpx_pa = kcalloc(tdx_info->nr_tdvpx_pages, sizeof(*tdx->tdvpx_pa),
+	tdvpx_pa = kcalloc(kvm_tdx->nr_tdvpx_pages, sizeof(*tdx->tdvpx_pa),
 			   GFP_KERNEL_ACCOUNT);
 	if (!tdvpx_pa) {
 		ret = -ENOMEM;
 		goto free_tdvpr;
 	}
-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
 		va = __get_free_page(GFP_KERNEL_ACCOUNT);
 		if (!va) {
 			ret = -ENOMEM;
@@ -2988,11 +3583,11 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
 	tdx->tdvpr_pa = tdvpr_pa;
 
 	tdx->tdvpx_pa = tdvpx_pa;
-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
 		err = tdh_vp_addcx(tdx->tdvpr_pa, tdvpx_pa[i]);
 		if (KVM_BUG_ON(err, vcpu->kvm)) {
 			pr_tdx_error(TDH_VP_ADDCX, err, NULL);
-			for (; i < tdx_info->nr_tdvpx_pages; i++) {
+			for (; i < kvm_tdx->nr_tdvpx_pages; i++) {
 				free_page((unsigned long)__va(tdvpx_pa[i]));
 				tdvpx_pa[i] = 0;
 			}
@@ -3014,7 +3609,7 @@ static int tdx_td_vcpu_init(struct kvm_vcpu *vcpu, u64 vcpu_rcx)
 	return 0;
 
 free_tdvpx:
-	for (i = 0; i < tdx_info->nr_tdvpx_pages; i++) {
+	for (i = 0; i < kvm_tdx->nr_tdvpx_pages; i++) {
 		if (tdvpx_pa[i])
 			free_page((unsigned long)__va(tdvpx_pa[i]));
 		tdvpx_pa[i] = 0;
@@ -3127,11 +3722,20 @@ int tdx_gmem_max_level(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn,
 	if (!is_private)
 		return 0;
 
-	/*
-	 * TDH.MEM.PAGE.AUG supports up to 2MB page.
-	 * TODO: Enable 1gb large page support.
-	 */
-	*max_level = min(*max_level, PG_LEVEL_2M);
+	if (to_kvm_tdx(kvm)->num_l2_vms)
+		/*
+		 * The large page is not supported yet for
+		 * host VMM and L1 VMM.
+		 * TODO: Enable large page support.
+		 */
+		*max_level = min(*max_level, PG_LEVEL_4K);
+	else
+		/*
+		 * TDH.MEM.PAGE.AUG supports up to 2MB page.
+		 * TODO: Enable 1gb large page support.
+		 */
+		*max_level = min(*max_level, PG_LEVEL_2M);
+
 	return 0;
 }
 
@@ -3295,6 +3899,28 @@ static int __init tdx_module_setup(void)
 	 */
 	tdx_info->nr_tdvpx_pages = tdvps_base_size / PAGE_SIZE - 1;
 
+	if (tdx_info->features0 & MD_FIELD_ID_FEATURES0_TD_PARTITIONING) {
+		u16 tdcs_size_per_l2_vm, tdvps_size_per_l2_vm;
+		struct tdx_md_map l2_mds[] = {
+			TDX_MD_MAP(TDCS_SIZE_PER_L2_VM, &tdcs_size_per_l2_vm),
+			TDX_MD_MAP(TDVPS_SIZE_PER_L2_VM, &tdvps_size_per_l2_vm),
+		};
+
+		ret = tdx_md_read(l2_mds, ARRAY_SIZE(l2_mds));
+		if (ret)
+			goto error_out;
+		/*
+		 * With TD partitioning feature supported, a TD can maximum support
+		 * creating 3 TD partitioning guest. Set the max_num_l2_vms with the
+		 * maximum value and user can decide the number of TD partitioning
+		 * guests accordingly.
+		 */
+		tdx_info->max_num_l2_vms = MAX_NUM_L2_VMS;
+		tdx_info->nr_tdcs_pages_per_l2_vm = tdcs_size_per_l2_vm / PAGE_SIZE;
+		tdx_info->nr_tdvpx_pages_per_l2_vm = tdvps_size_per_l2_vm / PAGE_SIZE;
+		pr_info("TDX module: TD partitioning is supported\n");
+	}
+
 #if 0
 	/*
 	 * Make TDH.VP.ENTER preserve RBP so that the stack unwinder
@@ -3423,6 +4049,16 @@ int __init tdx_hardware_setup(struct kvm_x86_ops *x86_ops)
 	if (r)
 		goto out;
 
+	if (tdx_info->max_num_l2_vms) {
+		l2sept_header_cache = kmem_cache_create("l2sept_header",
+							sizeof(struct l2sept_header),
+							0, SLAB_ACCOUNT, NULL);
+		if (!l2sept_header_cache) {
+			r = -ENOMEM;
+			goto out;
+		}
+	}
+
 	x86_ops->link_private_spt = tdx_sept_link_private_spt;
 	x86_ops->free_private_spt = tdx_sept_free_private_spt;
 	x86_ops->split_private_spt = tdx_sept_split_private_spt;
@@ -3445,6 +4081,7 @@ void tdx_hardware_unsetup(void)
 {
 	kfree(tdx_info);
 	kfree(tdx_mng_key_config_lock);
+	kmem_cache_destroy(l2sept_header_cache);
 }
 
 int tdx_offline_cpu(void)

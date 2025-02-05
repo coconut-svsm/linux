@@ -618,7 +618,8 @@ struct kvm_tdx_capabilities {
 	__u64 xfam_fixed0;
 	__u64 xfam_fixed1;
 	__u32 supported_gpaw;
-	__u32 padding;
+	__u8  max_num_l2_vms;
+	__u8  padding[3];
 	__u64 reserved[251];
 
 	__u32 nr_cpuid_configs;
@@ -630,13 +631,15 @@ struct kvm_tdx_init_vm {
 	__u64 mrconfigid[6];	/* sha384 digest */
 	__u64 mrowner[6];	/* sha384 digest */
 	__u64 mrownerconfig[6];	/* sha384 digest */
+	__u8  num_l2_vms;
+	__u8  padding[7];
 	/*
 	 * For future extensibility to make sizeof(struct kvm_tdx_init_vm) = 8KB.
 	 * This should be enough given sizeof(TD_PARAMS) = 1024.
 	 * 8KB was chosen given because
 	 * sizeof(struct kvm_cpuid_entry2) * KVM_MAX_CPUID_ENTRIES(=256) = 8KB.
 	 */
-	__u64 reserved[1004];
+	__u64 reserved[1003];
 
 	/*
 	 * Call KVM_TDX_INIT_VM before vcpu creation, thus before

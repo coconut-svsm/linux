@@ -40,8 +40,16 @@ static int kvm_set_ioapic_irq(struct kvm_kernel_irq_routing_entry *e,
 			      bool line_status)
 {
 	struct kvm_ioapic *ioapic = kvm->arch.vioapic;
+
+	if (static_call(kvm_x86_is_irq_event_pt)(kvm)) {
+		return static_call(kvm_x86_pt_ioapic_irq_event)(kvm,
+							       e->irqchip.pin,
+							       irq_source_id,
+							       level);
+	}
+
 	return kvm_ioapic_set_irq(ioapic, e->irqchip.pin, irq_source_id, level,
-				line_status);
+				 line_status);
 }
 
 int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
@@ -119,6 +127,7 @@ void kvm_set_msi_irq(struct kvm *kvm, struct kvm_kernel_irq_routing_entry *e,
 	irq->msi_redir_hint = msg.arch_addr_lo.redirect_hint;
 	irq->level = 1;
 	irq->shorthand = APIC_DEST_NOSHORT;
+	irq->is_msi = true;
 }
 EXPORT_SYMBOL_GPL(kvm_set_msi_irq);
 

@@ -1635,6 +1635,7 @@ struct kvm_lapic_irq {
 	u32 shorthand;
 	u32 dest_id;
 	bool msi_redir_hint;
+	bool is_msi;
 };
 
 static inline u16 kvm_lapic_irq_dest_mode(bool dest_mode_logical)
@@ -1884,6 +1885,11 @@ struct kvm_x86_ops {
 				  u64 *error_code, u8 *max_level);
 	void (*post_memory_mapping)(struct kvm_vcpu *vcpu,
 				    struct kvm_memory_mapping *mapping);
+	bool (*is_irq_event_pt)(struct kvm *kvm);
+	int (*pt_ioapic_irq_event)(struct kvm *kvm, u32 irq, u32 irq_source_id,
+				   u32 level);
+	int (*pt_msi_irq_event)(struct kvm *kvm, struct kvm_vcpu *vcpu,
+				struct kvm_lapic_irq *irq);
 };
 
 struct kvm_x86_nested_ops {

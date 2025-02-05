@@ -10005,6 +10005,7 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, int apicid)
 		.dest_mode = APIC_DEST_PHYSICAL,
 		.shorthand = APIC_DEST_NOSHORT,
 		.dest_id = apicid,
+		.is_msi = false,
 	};
 
 	kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);

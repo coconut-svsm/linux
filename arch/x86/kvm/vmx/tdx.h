@@ -7,6 +7,7 @@
 #include "posted_intr.h"
 #include "pmu_intel.h"
 #include "tdx_ops.h"
+#include "ioapic.h"
 
 struct kvm_tdx {
 	struct kvm kvm;
@@ -41,6 +42,44 @@ struct kvm_tdx {
 	/* For KVM_MEMORY_MAPPING */
 	struct mutex source_lock;
 	struct page *source_page;
+
+	/* Number of TD partitioning guests can be created by this TD */
+	u8 num_l2_vms;
+
+	/* The actual page number of tdcs/tdvpx */
+	u8 nr_tdcs_pages;
+	u8 nr_tdvpx_pages;
+
+	struct {
+		struct list_head head;
+		/*
+		 * The lock is to protect the head as it is possible multiple
+		 * CPU can access the head at the same time with adding or deling
+		 * entries.
+		 */
+		spinlock_t lock;
+	} l2sept_list[MAX_NUM_L2_VMS];
+
+	/*
+	 * FIXME: Currently num L1 vcpus = L2 vcpus as we only have one L2 VM.
+	 * But this may not be true when we have multi-L2 VM. In such case L1
+	 * may need to share num of L2 vcpus per VM. Once this is known, the
+	 * number of L2 vcpus per VM becomes relatively straight forward to
+	 * check and confirm if all the L2 vcpus per VM have completed shared
+	 * buffer setup. After this, host can start sharing irq_events.
+	 */
+	struct {
+		/* Shared page to pass irq event to L1 */
+		struct page *pinned_page;
+		u8 shared_irte_pir;
+		/*
+		 * spinlock to serialize aading an irq event entry to the
+		 * shared page.
+		 */
+		spinlock_t sirte_lock;
+
+		unsigned long ioapic_pin_state[IOAPIC_NUM_PINS];
+	} l2_pt_irq[MAX_NUM_L2_VMS];
 };
 
 union tdx_exit_reason {
@@ -73,6 +112,51 @@ union tdx_exit_reason {
 	};
 	u64 full;
 };
+
+struct meta_data {
+	u32 num_elem;	/* number of elements */
+	u32 elem_size;	/* sizeof of elements */
+	u32 head;	/* offset from base, to read */
+	u32 tail;	/* offset from base, to write */
+	u32 size;	/* ele_num * ele_size */
+	u32 padding[3];
+};
+
+struct sirte_header {
+	u8 pir;		/* PIR from L1 used by host to inject irq event */
+	u8 rsvd[15];
+	struct meta_data mdata;
+};
+
+struct shared_irq_event {
+	u32 type;
+	union {
+		struct {
+			u8 dest_mode:1;
+			u8 trig_mode:1;
+			u8 delivery_mode:3;
+			u8 padding:3;
+			u8 vector;
+			u8 dest_id;
+			u8 rsvd[5];
+			u32 rsvd1;
+		} msi;
+		struct {
+			u32 pin;
+			u32 level;
+			u32 source_id;
+		} irqchip;
+	};
+} __aligned(16);
+
+/* sirte page is set to 8K in size */
+#define NUM_IRQ_EVENTS						\
+	(((2 * PAGE_SIZE) - sizeof(struct sirte_header)) /	\
+	sizeof(struct shared_irq_event))
+struct sirte_page {
+	struct sirte_header sirte_hdr;
+	struct shared_irq_event data[NUM_IRQ_EVENTS];
+} __aligned(4096);
 
 struct vcpu_tdx {
 	struct kvm_vcpu	vcpu;
@@ -118,6 +202,8 @@ struct vcpu_tdx {
 	 * TODO: Support PMU for TDX.  Future work.
 	 */
 	struct lbr_desc lbr_desc;
+
+	bool resume_l1;
 };
 
 static inline bool is_td(struct kvm *kvm)
@@ -237,6 +323,41 @@ TDX_BUILD_TDVPS_ACCESSORS(64, VMCS, vmcs);
 
 TDX_BUILD_TDVPS_ACCESSORS(8, MANAGEMENT, management);
 TDX_BUILD_TDVPS_ACCESSORS(64, STATE_NON_ARCH, state_non_arch);
+
+#define TDX_BUILD_L2VMCS_ACCESSORS(bits)					\
+static __always_inline u##bits l2td_vmcs_read##bits(struct vcpu_tdx *tdx,	\
+						    u32 field, int vm)		\
+{										\
+	struct tdx_module_args out;						\
+	u64 err;								\
+										\
+	tdvps_vmcs_check(field, bits);						\
+	err = tdh_vp_rd(tdx->tdvpr_pa, L2VMCS_FIELD(vm, field),	&out);		\
+	if (KVM_BUG_ON(err, tdx->vcpu.kvm)) {					\
+		pr_err("TDH_VP_RD[VMCS.0x%x vm %d] failed: 0x%llx 0x%llx\n",	\
+		       field, vm, err, L2VMCS_FIELD(vm, field));		\
+		return 0;							\
+	}									\
+	return (u##bits)out.r8;							\
+}										\
+static __always_inline void l2td_vmcs_write##bits(struct vcpu_tdx *tdx,		\
+						  u32 field, u##bits val,	\
+						  int vm)			\
+{										\
+	struct tdx_module_args out;						\
+	u64 err;								\
+										\
+	tdvps_vmcs_check(field, bits);						\
+	err = tdh_vp_wr(tdx->tdvpr_pa, L2VMCS_FIELD(vm, field),			\
+			val, GENMASK_ULL(bits - 1, 0), &out);			\
+	if (KVM_BUG_ON(err, tdx->vcpu.kvm))					\
+		pr_err("TDH_VP_WR[VMCS.0x%x vm %d] = 0x%llx failed: 0x%llx 0x%llx\n", \
+		       field, vm, (u64)val, err, L2VMCS_FIELD(vm, field));	\
+}										\
+
+TDX_BUILD_L2VMCS_ACCESSORS(16);
+TDX_BUILD_L2VMCS_ACCESSORS(32);
+TDX_BUILD_L2VMCS_ACCESSORS(64);
 
 static __always_inline u64 td_tdcs_exec_read64(struct kvm_tdx *kvm_tdx, u32 field)
 {
