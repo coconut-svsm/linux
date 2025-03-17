@@ -5023,6 +5023,9 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm)
 
 	if (sev_snp_guest(vcpu->kvm))
 		sev_snp_init_vmcb(svm);
+
+	if (snp_secure_tsc_enabled(vcpu->kvm))
+		set_msr_interception(vcpu, svm->msrpm, MSR_AMD64_GUEST_TSC_FREQ, 1, 1);
 }
 
 void sev_init_vmcb(struct vcpu_svm *svm)

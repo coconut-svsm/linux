@@ -151,6 +151,7 @@ static const struct svm_direct_access_msrs {
 	{ .index = MSR_IA32_PL2_SSP,			.always = false },
 	{ .index = MSR_IA32_PL3_SSP,			.always = false },
 	{ .index = MSR_IA32_INT_SSP_TAB,		.always = false },
+	{ .index = MSR_AMD64_GUEST_TSC_FREQ,		.always = false },
 	{ .index = MSR_INVALID,				.always = false },
 };
 
