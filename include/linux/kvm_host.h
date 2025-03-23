@@ -343,6 +343,8 @@ struct kvm_vcpu {
 	unsigned long guest_debug;
 
 	struct mutex mutex;
+
+	/* Shared for all planes */
 	struct kvm_run *run;
 
 #ifndef __KVM_HAVE_ARCH_WQP
@@ -922,6 +924,23 @@ static inline void kvm_vm_bugged(struct kvm *kvm)
 	kvm_vm_dead(kvm);
 }
 
+
+#if KVM_MAX_VCPU_PLANES == 1
+static inline int kvm_arch_nr_vcpu_planes(struct kvm *kvm)
+{
+	return KVM_MAX_VCPU_PLANES;
+}
+
+static inline struct kvm_plane *vcpu_to_plane(struct kvm_vcpu *vcpu)
+{
+	return vcpu->kvm->planes[0];
+}
+#else
+static inline struct kvm_plane *vcpu_to_plane(struct kvm_vcpu *vcpu)
+{
+	return vcpu->kvm->planes[vcpu->plane_id];
+}
+#endif
 
 #define KVM_BUG(cond, kvm, fmt...)				\
 ({								\

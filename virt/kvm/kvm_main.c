@@ -4469,6 +4469,80 @@ static int kvm_wait_for_vcpu_online(struct kvm_vcpu *vcpu)
 	return 0;
 }
 
+static int kvm_plane_ioctl_check_extension(struct kvm_plane *plane, long arg)
+{
+	switch (arg) {
+#ifdef CONFIG_HAVE_KVM_MSI
+	case KVM_CAP_SIGNAL_MSI:
+#endif
+	case KVM_CAP_CHECK_EXTENSION_VM:
+		return 1;
+#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+	case KVM_CAP_MEMORY_ATTRIBUTES:
+		return kvm_supported_mem_attributes(plane);
+#endif
+	default:
+		return 0;
+	}
+}
+
+static long __kvm_plane_ioctl(struct kvm_plane *plane, unsigned int ioctl,
+			      unsigned long arg)
+{
+	void __user *argp = (void __user *)arg;
+
+	switch (ioctl) {
+#ifdef CONFIG_HAVE_KVM_MSI
+	case KVM_SIGNAL_MSI: {
+		struct kvm_msi msi;
+
+		if (copy_from_user(&msi, argp, sizeof(msi)))
+			return -EFAULT;
+		return kvm_send_userspace_msi(plane, &msi);
+	}
+#endif
+#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+	case KVM_SET_MEMORY_ATTRIBUTES: {
+		struct kvm_memory_attributes attrs;
+
+		if (copy_from_user(&attrs, argp, sizeof(attrs)))
+			return -EFAULT;
+		return kvm_vm_ioctl_set_mem_attributes(plane, &attrs);
+	}
+#endif
+	case KVM_CHECK_EXTENSION:
+		return kvm_plane_ioctl_check_extension(plane, arg);
+	default:
+		return -ENOTTY;
+	}
+}
+
+static long kvm_plane_ioctl(struct file *filp, unsigned int ioctl,
+			     unsigned long arg)
+{
+	struct kvm_plane *plane = filp->private_data;
+
+	if (plane->kvm->mm != current->mm || plane->kvm->vm_dead)
+		return -EIO;
+
+	return __kvm_plane_ioctl(plane, ioctl, arg);
+}
+
+static int kvm_plane_release(struct inode *inode, struct file *filp)
+{
+	struct kvm_plane *plane = filp->private_data;
+
+	kvm_put_kvm(plane->kvm);
+	return 0;
+}
+
+static struct file_operations kvm_plane_fops = {
+	.unlocked_ioctl = kvm_plane_ioctl,
+	.release = kvm_plane_release,
+	KVM_COMPAT(kvm_plane_ioctl),
+};
+
+
 static long kvm_vcpu_ioctl(struct file *filp,
 			   unsigned int ioctl, unsigned long arg)
 {
@@ -4960,6 +5034,14 @@ static int kvm_vm_ioctl_check_extension_generic(struct kvm *kvm, long arg)
 			return kvm_arch_nr_memslot_as_ids(kvm);
 		return KVM_MAX_NR_ADDRESS_SPACES;
 #endif
+#if KVM_MAX_VCPU_PLANES > 1
+	case KVM_CAP_PLANES:
+		if (kvm)
+			return kvm_arch_nr_vcpu_planes(kvm);
+		return KVM_MAX_PLANES;
+	case KVM_CAP_PLANES_FPU:
+		return kvm_arch_planes_share_fpu(kvm);
+#endif
 	case KVM_CAP_NR_MEMSLOTS:
 		return KVM_USER_MEM_SLOTS;
 	case KVM_CAP_DIRTY_LOG_RING:
@@ -5194,6 +5276,48 @@ static int kvm_vm_ioctl_get_stats_fd(struct kvm *kvm)
 	return fd;
 }
 
+static int kvm_vm_ioctl_create_plane(struct kvm *kvm, unsigned id)
+{
+	struct kvm_plane *plane;
+	struct file *file;
+	int r, fd;
+
+	if (id >= KVM_MAX_VCPU_PLANES)
+		return -EINVAL;
+
+	guard(mutex)(&kvm->lock);
+	if (kvm->planes[id])
+		return -EEXIST;
+
+	fd = get_unused_fd_flags(O_CLOEXEC);
+	if (fd < 0)
+		return fd;
+
+	plane = kvm_create_vm_plane(kvm, id);
+	if (IS_ERR(plane)) {
+		r = PTR_ERR(plane);
+		goto put_fd;
+	}
+
+	kvm_get_kvm(kvm);
+	file = anon_inode_getfile("kvm-plane", &kvm_plane_fops, plane, O_RDWR);
+	if (IS_ERR(file)) {
+		r = PTR_ERR(file);
+		goto put_kvm;
+	}
+
+	kvm->planes[id] = plane;
+	fd_install(fd, file);
+	return fd;
+
+put_kvm:
+	kvm_put_kvm(kvm);
+	kfree(plane);
+put_fd:
+	put_unused_fd(fd);
+	return r;
+}
+
 #define SANITY_CHECK_MEM_REGION_FIELD(field)					\
 do {										\
 	BUILD_BUG_ON(offsetof(struct kvm_userspace_memory_region, field) !=		\
@@ -5212,6 +5336,9 @@ static long kvm_vm_ioctl(struct file *filp,
 	if (kvm->mm != current->mm || kvm->vm_dead)
 		return -EIO;
 	switch (ioctl) {
+	case KVM_CREATE_PLANE:
+		r = kvm_vm_ioctl_create_plane(kvm, arg);
+		break;
 	case KVM_CREATE_VCPU:
 		r = kvm_vm_ioctl_create_vcpu(kvm, arg);
 		break;
@@ -5318,16 +5445,12 @@ static long kvm_vm_ioctl(struct file *filp,
 		break;
 	}
 #ifdef CONFIG_HAVE_KVM_MSI
-	case KVM_SIGNAL_MSI: {
-		struct kvm_msi msi;
-
-		r = -EFAULT;
-		if (copy_from_user(&msi, argp, sizeof(msi)))
-			goto out;
-		r = kvm_send_userspace_msi(kvm->planes[0], &msi);
-		break;
-	}
+	case KVM_SIGNAL_MSI:
 #endif
+#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+	case KVM_SET_MEMORY_ATTRIBUTES:
+#endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
+		return __kvm_plane_ioctl(kvm->planes[0], ioctl, arg);
 #ifdef __KVM_HAVE_IRQ_LINE
 	case KVM_IRQ_LINE_STATUS:
 	case KVM_IRQ_LINE: {
@@ -5383,18 +5506,6 @@ static long kvm_vm_ioctl(struct file *filp,
 		break;
 	}
 #endif /* CONFIG_HAVE_KVM_IRQ_ROUTING */
-#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
-	case KVM_SET_MEMORY_ATTRIBUTES: {
-		struct kvm_memory_attributes attrs;
-
-		r = -EFAULT;
-		if (copy_from_user(&attrs, argp, sizeof(attrs)))
-			goto out;
-
-		r = kvm_vm_ioctl_set_mem_attributes(kvm->planes[0], &attrs);
-		break;
-	}
-#endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
 	case KVM_CREATE_DEVICE: {
 		struct kvm_create_device cd;
 
@@ -6546,6 +6657,7 @@ int kvm_init(unsigned vcpu_size, unsigned vcpu_align, struct module *module)
 	kvm_chardev_ops.owner = module;
 	kvm_vm_fops.owner = module;
 	kvm_vcpu_fops.owner = module;
+	kvm_plane_fops.owner = module;
 	kvm_device_fops.owner = module;
 
 	kvm_preempt_ops.sched_in = kvm_sched_in;

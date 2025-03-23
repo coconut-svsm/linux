@@ -1635,4 +1635,6 @@ struct kvm_pre_fault_memory {
 	__u64 padding[5];
 };
 
+#define KVM_CREATE_PLANE	_IO(KVMIO, 0xd6)
+
 #endif /* __LINUX_KVM_H */
