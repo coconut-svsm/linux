@@ -5289,7 +5289,7 @@ static long kvm_vm_ioctl(struct file *filp,
 		r = -EFAULT;
 		if (copy_from_user(&msi, argp, sizeof(msi)))
 			goto out;
-		r = kvm_send_userspace_msi(kvm, &msi);
+		r = kvm_send_userspace_msi(kvm->planes[0], &msi);
 		break;
 	}
 #endif
