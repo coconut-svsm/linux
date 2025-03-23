@@ -6502,6 +6502,17 @@ disable_exits_unlock:
 		kvm->arch.triple_fault_event = cap->args[0];
 		r = 0;
 		break;
+	case KVM_CAP_PLANES_FPU:
+		r = -EINVAL;
+		if (atomic_read(&kvm->online_vcpus))
+			break;
+		if (cap->args[0] > 1)
+			break;
+		if (cap->args[0] && kvm->arch.has_protected_state)
+			break;
+		kvm->arch.planes_share_fpu = cap->args[0];
+		r = 0;
+		break;
 	case KVM_CAP_X86_USER_SPACE_MSR:
 		r = -EINVAL;
 		if (cap->args[0] & ~KVM_MSR_EXIT_REASON_VALID_MASK)
@@ -12279,6 +12290,27 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
 	return kvm_x86_call(vcpu_precreate)(kvm);
 }
 
+static void kvm_free_guest_fpstate(struct kvm_vcpu *vcpu, unsigned plane)
+{
+	if (plane == 0 || !vcpu->kvm->arch.planes_share_fpu)
+		fpu_free_guest_fpstate(&vcpu->arch.guest_fpu);
+}
+
+static int kvm_init_guest_fpstate(struct kvm_vcpu *vcpu, struct kvm_vcpu *plane0_vcpu)
+{
+	if (plane0_vcpu && vcpu->kvm->arch.planes_share_fpu) {
+		vcpu->arch.guest_fpu = plane0_vcpu->arch.guest_fpu;
+		return 0;
+	}
+
+	if (!fpu_alloc_guest_fpstate(&vcpu->arch.guest_fpu)) {
+		pr_err("failed to allocate vcpu's fpu\n");
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
 int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
 {
 	struct page *page;
@@ -12325,10 +12357,8 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
 	if (!alloc_emulate_ctxt(vcpu))
 		goto free_wbinvd_dirty_mask;
 
-	if (!fpu_alloc_guest_fpstate(&vcpu->arch.guest_fpu)) {
-		pr_err("failed to allocate vcpu's fpu\n");
+	if (kvm_init_guest_fpstate(vcpu, plane->plane ? vcpu->plane0 : NULL) < 0)
 		goto free_emulate_ctxt;
-	}
 
 	kvm_async_pf_hash_reset(vcpu);
 
@@ -12360,7 +12390,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
 	return 0;
 
 free_guest_fpu:
-	fpu_free_guest_fpstate(&vcpu->arch.guest_fpu);
+	kvm_free_guest_fpstate(vcpu, plane->plane);
 free_emulate_ctxt:
 	kmem_cache_free(x86_emulator_cache, vcpu->arch.emulate_ctxt);
 free_wbinvd_dirty_mask:
@@ -12412,7 +12442,7 @@ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
 
 	kmem_cache_free(x86_emulator_cache, vcpu->arch.emulate_ctxt);
 	free_cpumask_var(vcpu->arch.wbinvd_dirty_mask);
-	fpu_free_guest_fpstate(&vcpu->arch.guest_fpu);
+	kvm_free_guest_fpstate(vcpu, vcpu->plane);
 
 	kvm_xen_destroy_vcpu(vcpu);
 	kvm_hv_vcpu_uninit(vcpu);
@@ -12771,7 +12801,7 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	kvm->arch.apic_bus_cycle_ns = APIC_BUS_CYCLE_NS_DEFAULT;
 	kvm->arch.guest_can_read_msr_platform_info = true;
 	kvm->arch.enable_pmu = enable_pmu;
-
+	kvm->arch.planes_share_fpu = false;
 #if IS_ENABLED(CONFIG_HYPERV)
 	spin_lock_init(&kvm->arch.hv_root_tdp_lock);
 	kvm->arch.hv_root_tdp = INVALID_PAGE;
@@ -13736,6 +13766,11 @@ int kvm_handle_invpcid(struct kvm_vcpu *vcpu, unsigned long type, gva_t gva)
 	}
 }
 EXPORT_SYMBOL_GPL(kvm_handle_invpcid);
+
+bool kvm_arch_planes_share_fpu(struct kvm *kvm)
+{
+	return !kvm || kvm->arch.planes_share_fpu;
+}
 
 static int complete_sev_es_emulated_mmio(struct kvm_vcpu *vcpu)
 {

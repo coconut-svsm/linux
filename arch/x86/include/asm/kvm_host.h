@@ -1365,6 +1365,7 @@ struct kvm_arch {
 	unsigned int indirect_shadow_pages;
 	u8 mmu_valid_gen;
 	u8 vm_type;
+	bool planes_share_fpu;
 	bool has_private_mem;
 	bool has_protected_state;
 	bool pre_fault_allowed;
@@ -2465,5 +2466,6 @@ static inline bool kvm_arch_has_irq_bypass(void)
 {
 	return enable_device_posted_irqs;
 }
+bool kvm_arch_planes_share_fpu(struct kvm *kvm);
 
 #endif /* _ASM_X86_KVM_HOST_H */
