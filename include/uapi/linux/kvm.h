@@ -135,6 +135,16 @@ struct kvm_xen_exit {
 	} u;
 };
 
+struct kvm_plane_event_exit {
+#define KVM_PLANE_EVENT_INTERRUPT    1
+	__u16 cause;
+	__u16 pending_event_planes;
+	__u16 target;
+	__u16 padding;
+	__u32 flags;
+	__u64 extra[8];
+};
+
 #define KVM_S390_GET_SKEYS_NONE   1
 #define KVM_S390_SKEYS_MAX        1048576
 
@@ -179,6 +189,7 @@ struct kvm_xen_exit {
 #define KVM_EXIT_LOONGARCH_IOCSR  38
 #define KVM_EXIT_MEMORY_FAULT     39
 #define KVM_EXIT_TDX              40
+#define KVM_EXIT_PLANE_EVENT      41
 
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -211,7 +222,13 @@ struct kvm_run {
 	/* in */
 	__u8 request_interrupt_window;
 	__u8 HINT_UNSAFE_IN_KVM(immediate_exit);
-	__u8 padding1[6];
+
+	/* in/out */
+	__u8 plane;
+	__u16 suspended_planes;
+
+	/* in */
+	__u16 req_exit_planes;
 
 	/* out */
 	__u32 exit_reason;
@@ -473,6 +490,8 @@ struct kvm_run {
 				} setup_event_notify;
 			};
 		} tdx;
+		/* KVM_EXIT_PLANE_EVENT */
+		struct kvm_plane_event_exit plane_event;
 		/* Fix the size of the union. */
 		char padding[256];
 	};
@@ -962,6 +981,8 @@ struct kvm_enable_cap {
 #define KVM_CAP_ARM_EL2_E2H0 241
 #define KVM_CAP_RISCV_MP_STATE_RESET 242
 #define KVM_CAP_ARM_CACHEABLE_PFNMAP_SUPPORTED 243
+#define KVM_CAP_PLANES 244
+#define KVM_CAP_PLANES_FPU 245
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
