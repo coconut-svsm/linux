@@ -4289,7 +4289,7 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm_plane *plane, struct kvm_vcpu *pl
 	vcpu->dirty_ring = &plane0_vcpu->__dirty_ring;
 	kvm_vcpu_init(vcpu, plane, id);
 
-	r = kvm_arch_vcpu_create(vcpu);
+	r = kvm_arch_vcpu_create(vcpu, plane);
 	if (r)
 		goto vcpu_free_dirty_ring;
 
