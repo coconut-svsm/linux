@@ -508,6 +508,7 @@ static inline struct kvm *mmu_notifier_to_kvm(struct mmu_notifier *mn)
 }
 
 typedef bool (*gfn_handler_t)(struct kvm *kvm, struct kvm_gfn_range *range);
+typedef bool (*plane_gfn_handler_t)(struct kvm_plane *plane, struct kvm_gfn_range *range);
 
 typedef void (*on_lock_fn_t)(struct kvm *kvm);
 
@@ -519,7 +520,11 @@ struct kvm_mmu_notifier_range {
 	u64 start;
 	u64 end;
 	union kvm_mmu_notifier_arg arg;
-	gfn_handler_t handler;
+	/* The only difference is the type of the first parameter.  */
+	union {
+		gfn_handler_t handler;
+		plane_gfn_handler_t handler_plane;
+	};
 	on_lock_fn_t on_lock;
 	bool flush_on_ret;
 	bool may_block;
@@ -1113,6 +1118,9 @@ static struct kvm_plane *kvm_create_vm_plane(struct kvm *kvm, unsigned plane_id)
 	plane->kvm = kvm;
 	plane->plane = plane_id;
 
+#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+	xa_init(&plane->mem_attr_array);
+#endif
 	kvm_arch_init_plane(plane);
 	return plane;
 }
@@ -1138,9 +1146,6 @@ static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
 	spin_lock_init(&kvm->mn_invalidate_lock);
 	rcuwait_init(&kvm->mn_memslots_update_rcuwait);
 	xa_init(&kvm->vcpu_array);
-#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
-	xa_init(&kvm->mem_attr_array);
-#endif
 
 	INIT_LIST_HEAD(&kvm->gpc_list);
 	spin_lock_init(&kvm->gpc_lock);
@@ -1288,6 +1293,10 @@ static void kvm_destroy_devices(struct kvm *kvm)
 static void kvm_destroy_plane(struct kvm_plane *plane)
 {
 	kvm_arch_free_plane(plane);
+
+#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+	xa_destroy(&plane->mem_attr_array);
+#endif
 }
 
 static void kvm_destroy_vm(struct kvm *kvm)
@@ -1342,9 +1351,6 @@ static void kvm_destroy_vm(struct kvm *kvm)
 	}
 	cleanup_srcu_struct(&kvm->irq_srcu);
 	cleanup_srcu_struct(&kvm->srcu);
-#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
-	xa_destroy(&kvm->mem_attr_array);
-#endif
 	for (i = 0; i < ARRAY_SIZE(kvm->planes); i++) {
 		struct kvm_plane *plane = kvm->planes[i];
 		if (plane)
@@ -2451,9 +2457,9 @@ static int kvm_vm_ioctl_clear_dirty_log(struct kvm *kvm,
 #endif /* CONFIG_KVM_GENERIC_DIRTYLOG_READ_PROTECT */
 
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
-static u64 kvm_supported_mem_attributes(struct kvm *kvm)
+static u64 kvm_supported_mem_attributes(struct kvm_plane *plane)
 {
-	if (!kvm || kvm_arch_has_private_mem(kvm))
+	if (!plane || (!plane->plane && kvm_arch_has_private_mem(plane->kvm)))
 		return KVM_MEMORY_ATTRIBUTE_PRIVATE;
 
 	return 0;
@@ -2463,19 +2469,20 @@ static u64 kvm_supported_mem_attributes(struct kvm *kvm)
  * Returns true if _all_ gfns in the range [@start, @end) have attributes
  * such that the bits in @mask match @attrs.
  */
-bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
+bool kvm_range_has_memory_attributes(struct kvm_plane *plane,
+				     gfn_t start, gfn_t end,
 				     unsigned long mask, unsigned long attrs)
 {
-	XA_STATE(xas, &kvm->mem_attr_array, start);
+	XA_STATE(xas, &plane->mem_attr_array, start);
 	unsigned long index;
 	void *entry;
 
-	mask &= kvm_supported_mem_attributes(kvm);
+	mask &= kvm_supported_mem_attributes(plane);
 	if (attrs & ~mask)
 		return false;
 
 	if (end == start + 1)
-		return (kvm_get_memory_attributes(kvm, start) & mask) == attrs;
+		return (kvm_get_plane_memory_attributes(plane, start) & mask) == attrs;
 
 	guard(rcu)();
 	if (!attrs)
@@ -2494,8 +2501,8 @@ bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	return true;
 }
 
-static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
-						 struct kvm_mmu_notifier_range *range)
+static __always_inline void __kvm_handle_gfn_range(struct kvm *kvm, void *arg1,
+						   struct kvm_mmu_notifier_range *range)
 {
 	struct kvm_gfn_range gfn_range;
 	struct kvm_memory_slot *slot;
@@ -2535,7 +2542,7 @@ static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
 					range->on_lock(kvm);
 			}
 
-			ret |= range->handler(kvm, &gfn_range);
+			ret |= range->handler(arg1, &gfn_range);
 		}
 	}
 
@@ -2546,7 +2553,19 @@ static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
 		KVM_MMU_UNLOCK(kvm);
 }
 
-static bool kvm_pre_set_memory_attributes(struct kvm *kvm,
+static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
+						 struct kvm_mmu_notifier_range *range)
+{
+	__kvm_handle_gfn_range(kvm, kvm, range);
+}
+
+static __always_inline void kvm_plane_handle_gfn_range(struct kvm_plane *plane,
+						       struct kvm_mmu_notifier_range *range)
+{
+	__kvm_handle_gfn_range(plane->kvm, plane, range);
+}
+
+static bool kvm_pre_set_memory_attributes(struct kvm_plane *plane,
 					  struct kvm_gfn_range *range)
 {
 	/*
@@ -2560,20 +2579,21 @@ static bool kvm_pre_set_memory_attributes(struct kvm *kvm,
 	 * but it's not obvious that allowing new mappings while the attributes
 	 * are in flux is desirable or worth the complexity.
 	 */
-	kvm_mmu_invalidate_range_add(kvm, range->start, range->end);
+	kvm_mmu_invalidate_range_add(plane->kvm, range->start, range->end);
 
-	return kvm_arch_pre_set_memory_attributes(kvm, range);
+	return kvm_arch_pre_set_memory_attributes(plane, range);
 }
 
 /* Set @attributes for the gfn range [@start, @end). */
-static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
+static int kvm_vm_set_mem_attributes(struct kvm_plane *plane, gfn_t start, gfn_t end,
 				     unsigned long attributes)
 {
+	struct kvm *kvm = plane->kvm;
 	struct kvm_mmu_notifier_range pre_set_range = {
 		.start = start,
 		.end = end,
 		.arg.attributes = attributes,
-		.handler = kvm_pre_set_memory_attributes,
+		.handler_plane = kvm_pre_set_memory_attributes,
 		.on_lock = kvm_mmu_invalidate_begin,
 		.flush_on_ret = true,
 		.may_block = true,
@@ -2582,7 +2602,7 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 		.start = start,
 		.end = end,
 		.arg.attributes = attributes,
-		.handler = kvm_arch_post_set_memory_attributes,
+		.handler_plane = kvm_arch_post_set_memory_attributes,
 		.on_lock = kvm_mmu_invalidate_end,
 		.may_block = true,
 	};
@@ -2596,8 +2616,8 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 
 	mutex_lock(&kvm->slots_lock);
 
-	/* Nothing to do if the entire range has the desired attributes. */
-	if (kvm_range_has_memory_attributes(kvm, start, end, ~0, attributes))
+	/* Nothing to do if the entire range as the desired attributes. */
+	if (kvm_range_has_memory_attributes(plane, start, end, ~0, attributes))
 		goto out_unlock;
 
 	/*
@@ -2605,30 +2625,31 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	 * partway through setting the new attributes.
 	 */
 	for (i = start; i < end; i++) {
-		r = xa_reserve(&kvm->mem_attr_array, i, GFP_KERNEL_ACCOUNT);
+		r = xa_reserve(&plane->mem_attr_array, i, GFP_KERNEL_ACCOUNT);
 		if (r)
 			goto out_unlock;
 
 		cond_resched();
 	}
 
-	kvm_handle_gfn_range(kvm, &pre_set_range);
+	kvm_plane_handle_gfn_range(plane, &pre_set_range);
 
 	for (i = start; i < end; i++) {
-		r = xa_err(xa_store(&kvm->mem_attr_array, i, entry,
+		r = xa_err(xa_store(&plane->mem_attr_array, i, entry,
 				    GFP_KERNEL_ACCOUNT));
 		KVM_BUG_ON(r, kvm);
 		cond_resched();
 	}
 
-	kvm_handle_gfn_range(kvm, &post_set_range);
+	kvm_plane_handle_gfn_range(plane, &post_set_range);
 
 out_unlock:
 	mutex_unlock(&kvm->slots_lock);
 
 	return r;
 }
-static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
+
+static int kvm_vm_ioctl_set_mem_attributes(struct kvm_plane *plane,
 					   struct kvm_memory_attributes *attrs)
 {
 	gfn_t start, end;
@@ -2636,7 +2657,7 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 	/* flags is currently not used. */
 	if (attrs->flags)
 		return -EINVAL;
-	if (attrs->attributes & ~kvm_supported_mem_attributes(kvm))
+	if (attrs->attributes & ~kvm_supported_mem_attributes(plane))
 		return -EINVAL;
 	if (attrs->size == 0 || attrs->address + attrs->size < attrs->address)
 		return -EINVAL;
@@ -2653,7 +2674,7 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 	 */
 	BUILD_BUG_ON(sizeof(attrs->attributes) != sizeof(unsigned long));
 
-	return kvm_vm_set_mem_attributes(kvm, start, end, attrs->attributes);
+	return kvm_vm_set_mem_attributes(plane, start, end, attrs->attributes);
 }
 #endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
 
@@ -4948,7 +4969,7 @@ static int kvm_vm_ioctl_check_extension_generic(struct kvm *kvm, long arg)
 		return 1;
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 	case KVM_CAP_MEMORY_ATTRIBUTES:
-		return kvm_supported_mem_attributes(kvm);
+		return kvm_supported_mem_attributes(kvm ? kvm->planes[0] : NULL);
 #endif
 #ifdef CONFIG_KVM_PRIVATE_MEM
 	case KVM_CAP_GUEST_MEMFD:
@@ -5356,7 +5377,7 @@ static long kvm_vm_ioctl(struct file *filp,
 		if (copy_from_user(&attrs, argp, sizeof(attrs)))
 			goto out;
 
-		r = kvm_vm_ioctl_set_mem_attributes(kvm, &attrs);
+		r = kvm_vm_ioctl_set_mem_attributes(kvm->planes[0], &attrs);
 		break;
 	}
 #endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */

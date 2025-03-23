@@ -631,6 +631,7 @@ EXPORT_SYMBOL_GPL(kvm_gmem_get_pfn);
 long kvm_gmem_populate(struct kvm *kvm, gfn_t start_gfn, void __user *src, long npages,
 		       kvm_gmem_populate_cb post_populate, void *opaque)
 {
+	struct kvm_plane *plane0 = kvm->planes[0];
 	struct file *file;
 	struct kvm_memory_slot *slot;
 	void __user *p;
@@ -683,7 +684,7 @@ long kvm_gmem_populate(struct kvm *kvm, gfn_t start_gfn, void __user *src, long 
 			(npages - i) < (1 << max_order));
 
 		ret = -EINVAL;
-		while (!kvm_range_has_memory_attributes(kvm, gfn, gfn + (1 << max_order),
+		while (!kvm_range_has_memory_attributes(plane0, gfn, gfn + (1 << max_order),
 							KVM_MEMORY_ATTRIBUTE_PRIVATE,
 							KVM_MEMORY_ATTRIBUTE_PRIVATE)) {
 			if (!max_order)

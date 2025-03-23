@@ -7760,10 +7760,11 @@ static void hugepage_set_mixed(struct kvm_memory_slot *slot, gfn_t gfn,
 	lpage_info_slot(gfn, slot, level)->disallow_lpage |= KVM_LPAGE_MIXED_FLAG;
 }
 
-bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
+bool kvm_arch_pre_set_memory_attributes(struct kvm_plane *plane,
 					struct kvm_gfn_range *range)
 {
 	struct kvm_memory_slot *slot = range->slot;
+	struct kvm *kvm = plane->kvm;
 	int level;
 
 	/*
@@ -7823,26 +7824,27 @@ bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
 
 
 
-static bool hugepage_has_attrs(struct kvm *kvm, struct kvm_memory_slot *slot,
+static bool hugepage_has_attrs(struct kvm_plane *plane, struct kvm_memory_slot *slot,
 			       gfn_t gfn, int level, unsigned long attrs)
 {
 	const unsigned long start = gfn;
 	const unsigned long end = start + KVM_PAGES_PER_HPAGE(level);
 
 	if (level == PG_LEVEL_2M)
-		return kvm_range_has_memory_attributes(kvm, start, end, ~0, attrs);
+		return kvm_range_has_memory_attributes(plane, start, end, ~0, attrs);
 
 	for (gfn = start; gfn < end; gfn += KVM_PAGES_PER_HPAGE(level - 1)) {
 		if (hugepage_test_mixed(slot, gfn, level - 1) ||
-		    attrs != kvm_get_memory_attributes(kvm, gfn))
+		    attrs != kvm_get_plane_memory_attributes(plane, gfn))
 			return false;
 	}
 	return true;
 }
 
-bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
+bool kvm_arch_post_set_memory_attributes(struct kvm_plane *plane,
 					 struct kvm_gfn_range *range)
 {
+	struct kvm *kvm = plane->kvm;
 	unsigned long attrs = range->arg.attributes;
 	struct kvm_memory_slot *slot = range->slot;
 	int level;
@@ -7876,7 +7878,7 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 			 */
 			if (gfn >= slot->base_gfn &&
 			    gfn + nr_pages <= slot->base_gfn + slot->npages) {
-				if (hugepage_has_attrs(kvm, slot, gfn, level, attrs))
+				if (hugepage_has_attrs(plane, slot, gfn, level, attrs))
 					hugepage_clear_mixed(slot, gfn, level);
 				else
 					hugepage_set_mixed(slot, gfn, level);
@@ -7898,7 +7900,7 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 		 */
 		if (gfn < range->end &&
 		    (gfn + nr_pages) <= (slot->base_gfn + slot->npages)) {
-			if (hugepage_has_attrs(kvm, slot, gfn, level, attrs))
+			if (hugepage_has_attrs(plane, slot, gfn, level, attrs))
 				hugepage_clear_mixed(slot, gfn, level);
 			else
 				hugepage_set_mixed(slot, gfn, level);
@@ -7910,11 +7912,13 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 void kvm_mmu_init_memslot_memory_attributes(struct kvm *kvm,
 					    struct kvm_memory_slot *slot)
 {
+	struct kvm_plane *plane0;
 	int level;
 
 	if (!kvm_arch_has_private_mem(kvm))
 		return;
 
+	plane0 = kvm->planes[0];
 	for (level = PG_LEVEL_2M; level <= KVM_MAX_HUGEPAGE_LEVEL; level++) {
 		/*
 		 * Don't bother tracking mixed attributes for pages that can't
@@ -7934,9 +7938,9 @@ void kvm_mmu_init_memslot_memory_attributes(struct kvm *kvm,
 		 * be manually checked as the attributes may already be mixed.
 		 */
 		for (gfn = start; gfn < end; gfn += nr_pages) {
-			unsigned long attrs = kvm_get_memory_attributes(kvm, gfn);
+			unsigned long attrs = kvm_get_plane_memory_attributes(plane0, gfn);
 
-			if (hugepage_has_attrs(kvm, slot, gfn, level, attrs))
+			if (hugepage_has_attrs(plane0, slot, gfn, level, attrs))
 				hugepage_clear_mixed(slot, gfn, level);
 			else
 				hugepage_set_mixed(slot, gfn, level);
