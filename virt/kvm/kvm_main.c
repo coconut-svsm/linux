@@ -4268,6 +4268,11 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 		goto unlock_vcpu_destroy;
 	}
 
+	/*
+	 * Store an invalid plane number until fully initialized.  xa_insert() has
+	 * release semantics, which ensures the write is visible to kvm_get_vcpu().
+	 */
+	vcpu->plane = -1;
 	vcpu->vcpu_idx = atomic_read(&kvm->online_vcpus);
 	r = xa_insert(&kvm->vcpu_array, vcpu->vcpu_idx, vcpu, GFP_KERNEL_ACCOUNT);
 	WARN_ON_ONCE(r == -EBUSY);
@@ -4277,7 +4282,7 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 	/*
 	 * Now it's all set up, let userspace reach it.  Grab the vCPU's mutex
 	 * so that userspace can't invoke vCPU ioctl()s until the vCPU is fully
-	 * visible (per online_vcpus), e.g. so that KVM doesn't get tricked
+	 * visible (valid vcpu->plane), e.g. so that KVM doesn't get tricked
 	 * into a NULL-pointer dereference because KVM thinks the _current_
 	 * vCPU doesn't exist.  As a bonus, taking vcpu->mutex ensures lockdep
 	 * knows it's taken *inside* kvm->lock.
@@ -4288,12 +4293,13 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 	if (r < 0)
 		goto kvm_put_xa_erase;
 
-	/*
-	 * Pairs with smp_rmb() in kvm_get_vcpu.  Store the vcpu
-	 * pointer before kvm->online_vcpu's incremented value.
-	 */
-	smp_wmb();
 	atomic_inc(&kvm->online_vcpus);
+
+	/*
+	 * Pairs with xa_load() in kvm_get_vcpu, ensuring that online_vcpus
+	 * is updated before vcpu->plane.
+	 */
+	smp_store_release(&vcpu->plane, 0);
 	mutex_unlock(&vcpu->mutex);
 
 	mutex_unlock(&kvm->lock);
@@ -4436,7 +4442,7 @@ static int kvm_wait_for_vcpu_online(struct kvm_vcpu *vcpu)
 	 * In practice, this happy path will always be taken, as a well-behaved
 	 * VMM will never invoke a vCPU ioctl() before KVM_CREATE_VCPU returns.
 	 */
-	if (likely(vcpu->vcpu_idx < atomic_read(&kvm->online_vcpus)))
+	if (likely(vcpu->plane != -1))
 		return 0;
 
 	/*

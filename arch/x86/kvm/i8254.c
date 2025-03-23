@@ -260,9 +260,10 @@ static void pit_do_work(struct kthread_work *work)
 	 * VCPUs and only when LVT0 is in NMI mode.  The interrupt can
 	 * also be simultaneously delivered through PIC and IOAPIC.
 	 */
-	if (atomic_read(&kvm->arch.vapics_in_nmi_mode) > 0)
+	if (atomic_read(&kvm->arch.vapics_in_nmi_mode) > 0) {
 		kvm_for_each_vcpu(i, vcpu, kvm)
 			kvm_apic_nmi_wd_deliver(vcpu);
+	}
 }
 
 static enum hrtimer_restart pit_timer_fn(struct hrtimer *data)

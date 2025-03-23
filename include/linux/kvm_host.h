@@ -993,27 +993,16 @@ static inline struct kvm_io_bus *kvm_get_bus(struct kvm *kvm, enum kvm_bus idx)
 
 static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
 {
-	int num_vcpus = atomic_read(&kvm->online_vcpus);
-
-	/*
-	 * Explicitly verify the target vCPU is online, as the anti-speculation
-	 * logic only limits the CPU's ability to speculate, e.g. given a "bad"
-	 * index, clamping the index to 0 would return vCPU0, not NULL.
-	 */
-	if (i >= num_vcpus)
+	struct kvm_vcpu *vcpu = xa_load(&kvm->vcpu_array, i);
+	if (vcpu && unlikely(vcpu->plane == -1))
 		return NULL;
 
-	i = array_index_nospec(i, num_vcpus);
-
-	/* Pairs with smp_wmb() in kvm_vm_ioctl_create_vcpu.  */
-	smp_rmb();
-	return xa_load(&kvm->vcpu_array, i);
+	return vcpu;
 }
 
-#define kvm_for_each_vcpu(idx, vcpup, kvm)				\
-	if (atomic_read(&kvm->online_vcpus))				\
-		xa_for_each_range(&kvm->vcpu_array, idx, vcpup, 0,	\
-				  (atomic_read(&kvm->online_vcpus) - 1))
+#define kvm_for_each_vcpu(idx, vcpup, kvm)			\
+	xa_for_each(&kvm->vcpu_array, idx, vcpup)		\
+		if ((vcpup)->plane == -1) ; else		\
 
 static inline struct kvm_vcpu *kvm_get_vcpu_by_id(struct kvm *kvm, int id)
 {
