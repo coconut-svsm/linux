@@ -1185,14 +1185,13 @@ static inline bool kvm_apic_map_get_dest_lapic(struct kvm_plane *plane,
 	}
 
 	*bitmap = (lowest >= 0) ? 1 << lowest : 0;
-
 	return true;
 }
 
 bool kvm_irq_delivery_to_apic_fast(struct kvm *kvm, struct kvm_lapic *src,
 		struct kvm_lapic_irq *irq, int *r, struct dest_map *dest_map)
 {
-	struct kvm_plane *plane = kvm->planes[0];
+	struct kvm_plane *plane = kvm->planes[irq->plane];
 	struct kvm_apic_map *map;
 	unsigned long bitmap;
 	struct kvm_lapic **dst = NULL;
@@ -1248,7 +1247,7 @@ bool kvm_irq_delivery_to_apic_fast(struct kvm *kvm, struct kvm_lapic *src,
 bool kvm_intr_is_single_vcpu_fast(struct kvm *kvm, struct kvm_lapic_irq *irq,
 			struct kvm_vcpu **dest_vcpu)
 {
-	struct kvm_plane *plane = kvm->planes[0];
+	struct kvm_plane *plane = kvm->planes[irq->plane];
 	struct kvm_apic_map *map;
 	unsigned long bitmap;
 	struct kvm_lapic **dst = NULL;
@@ -1382,7 +1381,7 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 void kvm_bitmap_or_dest_vcpus(struct kvm *kvm, struct kvm_lapic_irq *irq,
 			      unsigned long *vcpu_bitmap)
 {
-	struct kvm_plane *plane = kvm->planes[0];
+	struct kvm_plane *plane = kvm->planes[irq->plane];
 	struct kvm_lapic **dest_vcpu = NULL;
 	struct kvm_lapic *src = NULL;
 	struct kvm_apic_map *map;
@@ -1514,6 +1513,7 @@ void kvm_apic_send_ipi(struct kvm_lapic *apic, u32 icr_low, u32 icr_high)
 	irq.trig_mode = icr_low & APIC_INT_LEVELTRIG;
 	irq.shorthand = icr_low & APIC_SHORT_MASK;
 	irq.msi_redir_hint = false;
+	irq.plane = apic->vcpu->plane;
 	if (apic_x2apic_mode(apic))
 		irq.dest_id = icr_high;
 	else

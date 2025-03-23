@@ -435,7 +435,7 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 				ioapic_service(ioapic, index, false);
 		}
 		if (e->fields.delivery_mode == APIC_DM_FIXED) {
-			struct kvm_lapic_irq irq;
+			struct kvm_lapic_irq irq = { 0 };
 
 			irq.vector = e->fields.vector;
 			irq.delivery_mode = e->fields.delivery_mode << 8;
@@ -475,7 +475,7 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 static int ioapic_service(struct kvm_ioapic *ioapic, int irq, bool line_status)
 {
 	union kvm_ioapic_redirect_entry *entry = &ioapic->redirtbl[irq];
-	struct kvm_lapic_irq irqe;
+	struct kvm_lapic_irq irqe = { 0 };
 	int ret;
 
 	if (entry->fields.mask ||

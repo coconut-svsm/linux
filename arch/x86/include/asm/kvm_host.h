@@ -1680,6 +1680,7 @@ struct kvm_lapic_irq {
 	u16 delivery_mode;
 	u16 dest_mode;
 	bool level;
+	u8 plane;
 	u16 trig_mode;
 	u32 shorthand;
 	u32 dest_id;

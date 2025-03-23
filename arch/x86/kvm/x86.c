@@ -9838,7 +9838,7 @@ static int kvm_pv_clock_pairing(struct kvm_vcpu *vcpu, gpa_t paddr,
  *
  * @apicid - apicid of vcpu to be kicked.
  */
-static void kvm_pv_kick_cpu_op(struct kvm *kvm, int apicid)
+static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned plane_id, int apicid)
 {
 	/*
 	 * All other fields are unused for APIC_DM_REMRD, but may be consumed by
@@ -9849,6 +9849,7 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, int apicid)
 		.dest_mode = APIC_DEST_PHYSICAL,
 		.shorthand = APIC_DEST_NOSHORT,
 		.dest_id = apicid,
+		.plane = plane_id,
 	};
 
 	kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);
@@ -9984,7 +9985,7 @@ int ____kvm_emulate_hypercall(struct kvm_vcpu *vcpu, int cpl,
 		if (!guest_pv_has(vcpu, KVM_FEATURE_PV_UNHALT))
 			break;
 
-		kvm_pv_kick_cpu_op(vcpu->kvm, a1);
+		kvm_pv_kick_cpu_op(vcpu->kvm, vcpu->plane, a1);
 		kvm_sched_yield(vcpu, a1);
 		ret = 0;
 		break;
@@ -13496,7 +13497,8 @@ void kvm_arch_async_page_present(struct kvm_vcpu *vcpu,
 {
 	struct kvm_lapic_irq irq = {
 		.delivery_mode = APIC_DM_FIXED,
-		.vector = vcpu->arch.apf.vec
+		.vector = vcpu->arch.apf.vec,
+		.plane = vcpu->plane,
 	};
 
 	if (work->wakeup_all)
