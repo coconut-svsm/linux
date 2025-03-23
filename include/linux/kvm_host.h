@@ -84,6 +84,10 @@
 #define KVM_MAX_NR_ADDRESS_SPACES	1
 #endif
 
+#ifndef KVM_MAX_VCPU_PLANES
+#define KVM_MAX_VCPU_PLANES		1
+#endif
+
 /*
  * For the normal pfn, the highest 12 bits should be zero,
  * so we can mask bit 62 ~ bit 52  to indicate the error pfn,
@@ -333,7 +337,8 @@ struct kvm_vcpu {
 #ifdef CONFIG_PROVE_RCU
 	int srcu_depth;
 #endif
-	int mode;
+	short plane;
+	short mode;
 	u64 requests;
 	unsigned long guest_debug;
 
@@ -367,6 +372,8 @@ struct kvm_vcpu {
 		spinlock_t lock;
 	} async_pf;
 #endif
+
+	struct kvm_vcpu *plane0;
 
 #ifdef CONFIG_HAVE_KVM_CPU_RELAX_INTERCEPT
 	/*
@@ -754,6 +761,11 @@ struct kvm_memslots {
 	int node_idx;
 };
 
+struct kvm_plane {
+	struct kvm *kvm;
+	int plane;
+};
+
 struct kvm {
 #ifdef KVM_HAVE_MMU_RWLOCK
 	rwlock_t mmu_lock;
@@ -778,6 +790,9 @@ struct kvm {
 	/* The current active memslot set for each address space */
 	struct kvm_memslots __rcu *memslots[KVM_MAX_NR_ADDRESS_SPACES];
 	struct xarray vcpu_array;
+
+	struct kvm_plane *planes[KVM_MAX_VCPU_PLANES];
+
 	/*
 	 * Protected by slots_lock, but can be read outside if an
 	 * incorrect answer is acceptable.
