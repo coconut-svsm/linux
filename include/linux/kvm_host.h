@@ -344,6 +344,9 @@ struct kvm_vcpu {
 
 	struct mutex mutex;
 
+	/* Only valid on plane 0 */
+	bool wants_to_run;
+
 	/* Shared for all planes */
 	struct kvm_run *run;
 
@@ -389,7 +392,6 @@ struct kvm_vcpu {
 		bool dy_eligible;
 	} spin_loop;
 #endif
-	bool wants_to_run;
 	bool preempted;
 	bool ready;
 	bool scheduled_out;

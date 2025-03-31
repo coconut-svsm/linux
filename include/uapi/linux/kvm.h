@@ -1636,5 +1636,6 @@ struct kvm_pre_fault_memory {
 };
 
 #define KVM_CREATE_PLANE	_IO(KVMIO, 0xd6)
+#define KVM_CREATE_VCPU_PLANE	_IO(KVMIO, 0xd7)
 
 #endif /* __LINUX_KVM_H */

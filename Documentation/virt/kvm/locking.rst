@@ -26,6 +26,9 @@ The acquisition orders for mutexes are as follows:
   are taken on the waiting side when modifying memslots, so MMU notifiers
   must not take either kvm->slots_lock or kvm->slots_arch_lock.
 
+- when VMs have multiple planes, vcpu->mutex for plane 0 can taken
+  outside vcpu->mutex for the same id and another plane
+
 cpus_read_lock() vs kvm_lock:
 
 - Taking cpus_read_lock() outside of kvm_lock is problematic, despite that
