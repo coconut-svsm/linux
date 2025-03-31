@@ -736,7 +736,9 @@ Caveat emptor:
     configuration (if there is) is not corrupted. Userspace can get a copy
     of the resulting CPUID configuration through KVM_GET_CPUID2 in case.
   - Using KVM_SET_CPUID{,2} after KVM_RUN, i.e. changing the guest vCPU model
-    after running the guest, may cause guest instability.
+    after running the guest, is forbidden; so is using the ioctls after
+    KVM_CREATE_VCPU_PLANE, because all planes must have the same CPU
+    capabilities.
   - Using heterogeneous CPUID configurations, modulo APIC IDs, topology, etc...
     may cause guest instability.
 

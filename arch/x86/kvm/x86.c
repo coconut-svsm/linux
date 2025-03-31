@@ -12359,6 +12359,11 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
 	if (plane->plane) {
 		page = NULL;
 		vcpu->arch.pio_data = vcpu->plane0->arch.pio_data;
+		r = kvm_dup_cpuid(vcpu, vcpu->plane0);
+		if (r < 0)
+			goto fail_free_lapic;
+
+		r = -ENOMEM;
 	} else {
 		page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
 		if (!page)
@@ -12406,7 +12411,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
 
 	kvm_xen_init_vcpu(vcpu);
 	vcpu_load(vcpu);
-	kvm_vcpu_after_set_cpuid(vcpu);
+	WARN_ON_ONCE(kvm_post_set_cpuid(vcpu));
 	kvm_set_tsc_khz(vcpu, vcpu->kvm->arch.default_tsc_khz);
 	kvm_vcpu_reset(vcpu, false);
 	kvm_init_mmu(vcpu);

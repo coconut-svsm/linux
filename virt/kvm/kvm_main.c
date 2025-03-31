@@ -4264,6 +4264,7 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm_plane *plane, struct kvm_vcpu *pl
 	if (plane->plane) {
 		page = NULL;
 		vcpu->run = plane0_vcpu->run;
+		plane0_vcpu->has_planes = true;
 	} else {
 		WARN_ON(plane0_vcpu != NULL);
 		plane0_vcpu = vcpu;

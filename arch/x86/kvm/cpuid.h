@@ -42,6 +42,7 @@ static inline struct kvm_cpuid_entry2 *kvm_find_cpuid_entry(struct kvm_vcpu *vcp
 int kvm_dev_ioctl_get_cpuid(struct kvm_cpuid2 *cpuid,
 			    struct kvm_cpuid_entry2 __user *entries,
 			    unsigned int type);
+int kvm_dup_cpuid(struct kvm_vcpu *vcpu, struct kvm_vcpu *source);
 int kvm_post_set_cpuid(struct kvm_vcpu *vcpu);
 int kvm_vcpu_ioctl_set_cpuid(struct kvm_vcpu *vcpu,
 			     struct kvm_cpuid *cpuid,

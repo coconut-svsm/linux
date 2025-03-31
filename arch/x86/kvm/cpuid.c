@@ -545,7 +545,7 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
 	 * KVM_SET_CPUID{,2} again. To support this legacy behavior, check
 	 * whether the supplied CPUID data is equal to what's already set.
 	 */
-	if (kvm_vcpu_has_run(vcpu)) {
+	if (kvm_vcpu_has_run(vcpu) || vcpu->has_planes) {
 		r = kvm_cpuid_check_equal(vcpu, e2, nent);
 		if (r)
 			goto err;
@@ -565,6 +565,23 @@ err:
 	swap(vcpu->arch.cpuid_entries, e2);
 	swap(vcpu->arch.cpuid_nent, nent);
 	return r;
+}
+
+int kvm_dup_cpuid(struct kvm_vcpu *vcpu, struct kvm_vcpu *source)
+{
+	if (WARN_ON_ONCE(vcpu->arch.cpuid_entries || vcpu->arch.cpuid_nent))
+		return -EEXIST;
+
+	vcpu->arch.cpuid_entries = kmemdup(source->arch.cpuid_entries,
+		     source->arch.cpuid_nent * sizeof(struct kvm_cpuid_entry2),
+		     GFP_KERNEL_ACCOUNT);
+	if (!vcpu->arch.cpuid_entries)
+		return -ENOMEM;
+
+	memcpy(vcpu->arch.cpu_caps, source->arch.cpu_caps, sizeof(source->arch.cpu_caps));
+	vcpu->arch.cpuid_nent = source->arch.cpuid_nent;
+
+	return 0;
 }
 
 /* when an old userspace process fills a new kernel module */

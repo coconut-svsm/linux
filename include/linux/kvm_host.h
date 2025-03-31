@@ -345,6 +345,7 @@ struct kvm_vcpu {
 	struct mutex mutex;
 
 	/* Only valid on plane 0 */
+	bool has_planes;
 	bool wants_to_run;
 
 	/* Shared for all planes */
