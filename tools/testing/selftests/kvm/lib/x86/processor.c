@@ -917,6 +917,21 @@ uint64_t vcpu_get_msr(struct kvm_vcpu *vcpu, uint64_t msr_index)
 	return buffer.entry.data;
 }
 
+int _plane_vcpu_set_msr(struct kvm_plane_vcpu *plane_vcpu, uint64_t msr_index, uint64_t msr_value)
+{
+	struct {
+		struct kvm_msrs header;
+		struct kvm_msr_entry entry;
+	} buffer = {};
+
+	memset(&buffer, 0, sizeof(buffer));
+	buffer.header.nmsrs = 1;
+	buffer.entry.index = msr_index;
+	buffer.entry.data = msr_value;
+
+	return __plane_vcpu_ioctl(plane_vcpu, KVM_SET_MSRS, &buffer.header);
+}
+
 int _vcpu_set_msr(struct kvm_vcpu *vcpu, uint64_t msr_index, uint64_t msr_value)
 {
 	struct {
