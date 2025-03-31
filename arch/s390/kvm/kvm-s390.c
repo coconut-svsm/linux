@@ -4138,7 +4138,7 @@ bool kvm_arch_no_poll(struct kvm_vcpu *vcpu)
 	/* do not poll with more than halt_poll_max_steal percent of steal time */
 	if (get_lowcore()->avg_steal_timer * 100 / (TICK_USEC << 12) >=
 	    READ_ONCE(halt_poll_max_steal)) {
-		vcpu->stat.halt_no_poll_steal++;
+		vcpu->stat->halt_no_poll_steal++;
 		return true;
 	}
 	return false;
@@ -4903,7 +4903,7 @@ try_again:
 		trace_kvm_s390_major_guest_pfault(vcpu);
 		if (kvm_arch_setup_async_pf(vcpu))
 			return 0;
-		vcpu->stat.pfault_sync++;
+		vcpu->stat->pfault_sync++;
 		/* Could not setup async pfault, try again synchronously */
 		foll &= ~FOLL_NOWAIT;
 		goto try_again;
@@ -4965,7 +4965,7 @@ static int vcpu_post_run_handle_fault(struct kvm_vcpu *vcpu)
 
 	switch (current->thread.gmap_int_code & PGM_INT_CODE_MASK) {
 	case 0:
-		vcpu->stat.exit_null++;
+		vcpu->stat->exit_null++;
 		break;
 	case PGM_SECURE_STORAGE_ACCESS:
 	case PGM_SECURE_STORAGE_VIOLATION:
@@ -5383,7 +5383,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 
 	kvm_sigset_deactivate(vcpu);
 
-	vcpu->stat.exit_userspace++;
+	vcpu->stat->exit_userspace++;
 out:
 	vcpu_put(vcpu);
 	return rc;

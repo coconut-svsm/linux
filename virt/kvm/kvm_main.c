@@ -3703,7 +3703,7 @@ bool kvm_vcpu_block(struct kvm_vcpu *vcpu)
 	struct rcuwait *wait = kvm_arch_vcpu_get_wait(vcpu);
 	bool waited = false;
 
-	vcpu->stat.generic.blocking = 1;
+	vcpu->stat->generic.blocking = 1;
 
 	preempt_disable();
 	kvm_arch_vcpu_blocking(vcpu);
@@ -3725,7 +3725,7 @@ bool kvm_vcpu_block(struct kvm_vcpu *vcpu)
 	kvm_arch_vcpu_unblocking(vcpu);
 	preempt_enable();
 
-	vcpu->stat.generic.blocking = 0;
+	vcpu->stat->generic.blocking = 0;
 
 	return waited;
 }
@@ -3733,16 +3733,16 @@ bool kvm_vcpu_block(struct kvm_vcpu *vcpu)
 static inline void update_halt_poll_stats(struct kvm_vcpu *vcpu, ktime_t start,
 					  ktime_t end, bool success)
 {
-	struct kvm_vcpu_stat_generic *stats = &vcpu->stat.generic;
+	struct kvm_vcpu_stat_generic *stats = &vcpu->stat->generic;
 	u64 poll_ns = ktime_to_ns(ktime_sub(end, start));
 
-	++vcpu->stat.generic.halt_attempted_poll;
+	++vcpu->stat->generic.halt_attempted_poll;
 
 	if (success) {
-		++vcpu->stat.generic.halt_successful_poll;
+		++vcpu->stat->generic.halt_successful_poll;
 
 		if (!vcpu_valid_wakeup(vcpu))
-			++vcpu->stat.generic.halt_poll_invalid;
+			++vcpu->stat->generic.halt_poll_invalid;
 
 		stats->halt_poll_success_ns += poll_ns;
 		KVM_STATS_LOG_HIST_UPDATE(stats->halt_poll_success_hist, poll_ns);
@@ -3806,9 +3806,9 @@ void kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 
 	cur = ktime_get();
 	if (waited) {
-		vcpu->stat.generic.halt_wait_ns +=
+		vcpu->stat->generic.halt_wait_ns +=
 			ktime_to_ns(cur) - ktime_to_ns(poll_end);
-		KVM_STATS_LOG_HIST_UPDATE(vcpu->stat.generic.halt_wait_hist,
+		KVM_STATS_LOG_HIST_UPDATE(vcpu->stat->generic.halt_wait_hist,
 				ktime_to_ns(cur) - ktime_to_ns(poll_end));
 	}
 out:
@@ -3853,7 +3853,7 @@ bool kvm_vcpu_wake_up(struct kvm_vcpu *vcpu)
 {
 	if (__kvm_vcpu_wake_up(vcpu)) {
 		WRITE_ONCE(vcpu->ready, true);
-		++vcpu->stat.generic.halt_wakeup;
+		++vcpu->stat->generic.halt_wakeup;
 		return true;
 	}
 
@@ -4256,6 +4256,7 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 	vcpu->run = page_address(page);
 
 	vcpu->plane0 = vcpu;
+	vcpu->stat = &vcpu->__stat;
 	kvm_vcpu_init(vcpu, kvm, id);
 
 	r = kvm_arch_vcpu_create(vcpu);

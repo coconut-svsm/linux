@@ -1198,7 +1198,7 @@ static int __kvm_mips_handle_exit(struct kvm_vcpu *vcpu)
 	case EXCCODE_INT:
 		kvm_debug("[%d]EXCCODE_INT @ %p\n", vcpu->vcpu_id, opc);
 
-		++vcpu->stat.int_exits;
+		++vcpu->stat->int_exits;
 
 		if (need_resched())
 			cond_resched();
@@ -1209,7 +1209,7 @@ static int __kvm_mips_handle_exit(struct kvm_vcpu *vcpu)
 	case EXCCODE_CPU:
 		kvm_debug("EXCCODE_CPU: @ PC: %p\n", opc);
 
-		++vcpu->stat.cop_unusable_exits;
+		++vcpu->stat->cop_unusable_exits;
 		ret = kvm_mips_callbacks->handle_cop_unusable(vcpu);
 		/* XXXKYMA: Might need to return to user space */
 		if (run->exit_reason == KVM_EXIT_IRQ_WINDOW_OPEN)
@@ -1217,7 +1217,7 @@ static int __kvm_mips_handle_exit(struct kvm_vcpu *vcpu)
 		break;
 
 	case EXCCODE_MOD:
-		++vcpu->stat.tlbmod_exits;
+		++vcpu->stat->tlbmod_exits;
 		ret = kvm_mips_callbacks->handle_tlb_mod(vcpu);
 		break;
 
@@ -1226,7 +1226,7 @@ static int __kvm_mips_handle_exit(struct kvm_vcpu *vcpu)
 			  cause, kvm_read_c0_guest_status(&vcpu->arch.cop0), opc,
 			  badvaddr);
 
-		++vcpu->stat.tlbmiss_st_exits;
+		++vcpu->stat->tlbmiss_st_exits;
 		ret = kvm_mips_callbacks->handle_tlb_st_miss(vcpu);
 		break;
 
@@ -1234,52 +1234,52 @@ static int __kvm_mips_handle_exit(struct kvm_vcpu *vcpu)
 		kvm_debug("TLB LD fault: cause %#x, PC: %p, BadVaddr: %#lx\n",
 			  cause, opc, badvaddr);
 
-		++vcpu->stat.tlbmiss_ld_exits;
+		++vcpu->stat->tlbmiss_ld_exits;
 		ret = kvm_mips_callbacks->handle_tlb_ld_miss(vcpu);
 		break;
 
 	case EXCCODE_ADES:
-		++vcpu->stat.addrerr_st_exits;
+		++vcpu->stat->addrerr_st_exits;
 		ret = kvm_mips_callbacks->handle_addr_err_st(vcpu);
 		break;
 
 	case EXCCODE_ADEL:
-		++vcpu->stat.addrerr_ld_exits;
+		++vcpu->stat->addrerr_ld_exits;
 		ret = kvm_mips_callbacks->handle_addr_err_ld(vcpu);
 		break;
 
 	case EXCCODE_SYS:
-		++vcpu->stat.syscall_exits;
+		++vcpu->stat->syscall_exits;
 		ret = kvm_mips_callbacks->handle_syscall(vcpu);
 		break;
 
 	case EXCCODE_RI:
-		++vcpu->stat.resvd_inst_exits;
+		++vcpu->stat->resvd_inst_exits;
 		ret = kvm_mips_callbacks->handle_res_inst(vcpu);
 		break;
 
 	case EXCCODE_BP:
-		++vcpu->stat.break_inst_exits;
+		++vcpu->stat->break_inst_exits;
 		ret = kvm_mips_callbacks->handle_break(vcpu);
 		break;
 
 	case EXCCODE_TR:
-		++vcpu->stat.trap_inst_exits;
+		++vcpu->stat->trap_inst_exits;
 		ret = kvm_mips_callbacks->handle_trap(vcpu);
 		break;
 
 	case EXCCODE_MSAFPE:
-		++vcpu->stat.msa_fpe_exits;
+		++vcpu->stat->msa_fpe_exits;
 		ret = kvm_mips_callbacks->handle_msa_fpe(vcpu);
 		break;
 
 	case EXCCODE_FPE:
-		++vcpu->stat.fpe_exits;
+		++vcpu->stat->fpe_exits;
 		ret = kvm_mips_callbacks->handle_fpe(vcpu);
 		break;
 
 	case EXCCODE_MSADIS:
-		++vcpu->stat.msa_disabled_exits;
+		++vcpu->stat->msa_disabled_exits;
 		ret = kvm_mips_callbacks->handle_msa_disabled(vcpu);
 		break;
 
@@ -1316,7 +1316,7 @@ static int __kvm_mips_handle_exit(struct kvm_vcpu *vcpu)
 		if (signal_pending(current)) {
 			run->exit_reason = KVM_EXIT_INTR;
 			ret = (-EINTR << 2) | RESUME_HOST;
-			++vcpu->stat.signal_exits;
+			++vcpu->stat->signal_exits;
 			trace_kvm_exit(vcpu, KVM_TRACE_EXIT_SIGNAL);
 		}
 	}

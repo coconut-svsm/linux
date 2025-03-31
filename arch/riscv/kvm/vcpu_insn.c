@@ -201,14 +201,14 @@ void kvm_riscv_vcpu_wfi(struct kvm_vcpu *vcpu)
 
 static int wfi_insn(struct kvm_vcpu *vcpu, struct kvm_run *run, ulong insn)
 {
-	vcpu->stat.wfi_exit_stat++;
+	vcpu->stat->wfi_exit_stat++;
 	kvm_riscv_vcpu_wfi(vcpu);
 	return KVM_INSN_CONTINUE_NEXT_SEPC;
 }
 
 static int wrs_insn(struct kvm_vcpu *vcpu, struct kvm_run *run, ulong insn)
 {
-	vcpu->stat.wrs_exit_stat++;
+	vcpu->stat->wrs_exit_stat++;
 	kvm_vcpu_on_spin(vcpu, vcpu->arch.guest_context.sstatus & SR_SPP);
 	return KVM_INSN_CONTINUE_NEXT_SEPC;
 }
@@ -335,7 +335,7 @@ static int csr_insn(struct kvm_vcpu *vcpu, struct kvm_run *run, ulong insn)
 		if (rc > KVM_INSN_EXIT_TO_USER_SPACE) {
 			if (rc == KVM_INSN_CONTINUE_NEXT_SEPC) {
 				run->riscv_csr.ret_value = val;
-				vcpu->stat.csr_exit_kernel++;
+				vcpu->stat->csr_exit_kernel++;
 				kvm_riscv_vcpu_csr_return(vcpu, run);
 				rc = KVM_INSN_CONTINUE_SAME_SEPC;
 			}
@@ -345,7 +345,7 @@ static int csr_insn(struct kvm_vcpu *vcpu, struct kvm_run *run, ulong insn)
 
 	/* Exit to user-space for CSR emulation */
 	if (rc <= KVM_INSN_EXIT_TO_USER_SPACE) {
-		vcpu->stat.csr_exit_user++;
+		vcpu->stat->csr_exit_user++;
 		run->exit_reason = KVM_EXIT_RISCV_CSR;
 	}
 
@@ -576,13 +576,13 @@ int kvm_riscv_vcpu_mmio_load(struct kvm_vcpu *vcpu, struct kvm_run *run,
 	if (!kvm_io_bus_read(vcpu, KVM_MMIO_BUS, fault_addr, len, data_buf)) {
 		/* Successfully handled MMIO access in the kernel so resume */
 		memcpy(run->mmio.data, data_buf, len);
-		vcpu->stat.mmio_exit_kernel++;
+		vcpu->stat->mmio_exit_kernel++;
 		kvm_riscv_vcpu_mmio_return(vcpu, run);
 		return 1;
 	}
 
 	/* Exit to userspace for MMIO emulation */
-	vcpu->stat.mmio_exit_user++;
+	vcpu->stat->mmio_exit_user++;
 	run->exit_reason = KVM_EXIT_MMIO;
 
 	return 0;
@@ -709,13 +709,13 @@ int kvm_riscv_vcpu_mmio_store(struct kvm_vcpu *vcpu, struct kvm_run *run,
 	if (!kvm_io_bus_write(vcpu, KVM_MMIO_BUS,
 			      fault_addr, len, run->mmio.data)) {
 		/* Successfully handled MMIO access in the kernel so resume */
-		vcpu->stat.mmio_exit_kernel++;
+		vcpu->stat->mmio_exit_kernel++;
 		kvm_riscv_vcpu_mmio_return(vcpu, run);
 		return 1;
 	}
 
 	/* Exit to userspace for MMIO emulation */
-	vcpu->stat.mmio_exit_user++;
+	vcpu->stat->mmio_exit_user++;
 	run->exit_reason = KVM_EXIT_MMIO;
 
 	return 0;

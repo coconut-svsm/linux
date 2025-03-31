@@ -1162,7 +1162,7 @@ static enum emulation_result kvm_vz_gpsi_lwc2(union mips_instruction inst,
 	rd = inst.loongson3_lscsr_format.rd;
 	switch (inst.loongson3_lscsr_format.fr) {
 	case 0x8:  /* Read CPUCFG */
-		++vcpu->stat.vz_cpucfg_exits;
+		++vcpu->stat->vz_cpucfg_exits;
 		hostcfg = read_cpucfg(vcpu->arch.gprs[rs]);
 
 		switch (vcpu->arch.gprs[rs]) {
@@ -1491,38 +1491,38 @@ static int kvm_trap_vz_handle_guest_exit(struct kvm_vcpu *vcpu)
 	trace_kvm_exit(vcpu, KVM_TRACE_EXIT_GEXCCODE_BASE + gexccode);
 	switch (gexccode) {
 	case MIPS_GCTL0_GEXC_GPSI:
-		++vcpu->stat.vz_gpsi_exits;
+		++vcpu->stat->vz_gpsi_exits;
 		er = kvm_trap_vz_handle_gpsi(cause, opc, vcpu);
 		break;
 	case MIPS_GCTL0_GEXC_GSFC:
-		++vcpu->stat.vz_gsfc_exits;
+		++vcpu->stat->vz_gsfc_exits;
 		er = kvm_trap_vz_handle_gsfc(cause, opc, vcpu);
 		break;
 	case MIPS_GCTL0_GEXC_HC:
-		++vcpu->stat.vz_hc_exits;
+		++vcpu->stat->vz_hc_exits;
 		er = kvm_trap_vz_handle_hc(cause, opc, vcpu);
 		break;
 	case MIPS_GCTL0_GEXC_GRR:
-		++vcpu->stat.vz_grr_exits;
+		++vcpu->stat->vz_grr_exits;
 		er = kvm_trap_vz_no_handler_guest_exit(gexccode, cause, opc,
 						       vcpu);
 		break;
 	case MIPS_GCTL0_GEXC_GVA:
-		++vcpu->stat.vz_gva_exits;
+		++vcpu->stat->vz_gva_exits;
 		er = kvm_trap_vz_no_handler_guest_exit(gexccode, cause, opc,
 						       vcpu);
 		break;
 	case MIPS_GCTL0_GEXC_GHFC:
-		++vcpu->stat.vz_ghfc_exits;
+		++vcpu->stat->vz_ghfc_exits;
 		er = kvm_trap_vz_handle_ghfc(cause, opc, vcpu);
 		break;
 	case MIPS_GCTL0_GEXC_GPA:
-		++vcpu->stat.vz_gpa_exits;
+		++vcpu->stat->vz_gpa_exits;
 		er = kvm_trap_vz_no_handler_guest_exit(gexccode, cause, opc,
 						       vcpu);
 		break;
 	default:
-		++vcpu->stat.vz_resvd_exits;
+		++vcpu->stat->vz_resvd_exits;
 		er = kvm_trap_vz_no_handler_guest_exit(gexccode, cause, opc,
 						       vcpu);
 		break;

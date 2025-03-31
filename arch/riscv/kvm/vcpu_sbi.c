@@ -121,7 +121,7 @@ void kvm_riscv_vcpu_sbi_forward(struct kvm_vcpu *vcpu, struct kvm_run *run)
 	struct kvm_cpu_context *cp = &vcpu->arch.guest_context;
 
 	vcpu->arch.sbi_context.return_handled = 0;
-	vcpu->stat.ecall_exit_stat++;
+	vcpu->stat->ecall_exit_stat++;
 	run->exit_reason = KVM_EXIT_RISCV_SBI;
 	run->riscv_sbi.extension_id = cp->a7;
 	run->riscv_sbi.function_id = cp->a6;

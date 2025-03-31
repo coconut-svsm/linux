@@ -132,7 +132,7 @@ static void icp_rm_set_vcpu_irq(struct kvm_vcpu *vcpu,
 	int hcore;
 
 	/* Mark the target VCPU as having an interrupt pending */
-	vcpu->stat.queue_intr++;
+	vcpu->stat->queue_intr++;
 	set_bit(BOOK3S_IRQPRIO_EXTERNAL, &vcpu->arch.pending_exceptions);
 
 	/* Kick self ? Just set MER and return */
@@ -713,14 +713,14 @@ static int ics_rm_eoi(struct kvm_vcpu *vcpu, u32 irq)
 
 	/* Handle passthrough interrupts */
 	if (state->host_irq) {
-		++vcpu->stat.pthru_all;
+		++vcpu->stat->pthru_all;
 		if (state->intr_cpu != -1) {
 			int pcpu = raw_smp_processor_id();
 
 			pcpu = cpu_first_thread_sibling(pcpu);
-			++vcpu->stat.pthru_host;
+			++vcpu->stat->pthru_host;
 			if (state->intr_cpu != pcpu) {
-				++vcpu->stat.pthru_bad_aff;
+				++vcpu->stat->pthru_bad_aff;
 				xics_opal_set_server(state->host_irq, pcpu);
 			}
 			state->intr_cpu = -1;

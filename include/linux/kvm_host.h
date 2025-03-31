@@ -394,7 +394,8 @@ struct kvm_vcpu {
 	bool ready;
 	bool scheduled_out;
 	struct kvm_vcpu_arch arch;
-	struct kvm_vcpu_stat stat;
+	struct kvm_vcpu_stat *stat;
+	struct kvm_vcpu_stat __stat;
 	char stats_id[KVM_STATS_NAME_SIZE];
 	struct kvm_dirty_ring dirty_ring;
 
@@ -2487,7 +2488,7 @@ static inline int kvm_arch_vcpu_run_pid_change(struct kvm_vcpu *vcpu)
 static inline void kvm_handle_signal_exit(struct kvm_vcpu *vcpu)
 {
 	vcpu->run->exit_reason = KVM_EXIT_INTR;
-	vcpu->stat.signal_exits++;
+	vcpu->stat->signal_exits++;
 }
 #endif /* CONFIG_KVM_XFER_TO_GUEST_WORK */
 

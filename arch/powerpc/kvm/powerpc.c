@@ -352,7 +352,7 @@ int kvmppc_st(struct kvm_vcpu *vcpu, ulong *eaddr, int size, void *ptr,
 	struct kvmppc_pte pte;
 	int r = -EINVAL;
 
-	vcpu->stat.st++;
+	vcpu->stat->st++;
 
 	if (vcpu->kvm->arch.kvm_ops && vcpu->kvm->arch.kvm_ops->store_to_eaddr)
 		r = vcpu->kvm->arch.kvm_ops->store_to_eaddr(vcpu, eaddr, ptr,
@@ -395,7 +395,7 @@ int kvmppc_ld(struct kvm_vcpu *vcpu, ulong *eaddr, int size, void *ptr,
 	struct kvmppc_pte pte;
 	int rc = -EINVAL;
 
-	vcpu->stat.ld++;
+	vcpu->stat->ld++;
 
 	if (vcpu->kvm->arch.kvm_ops && vcpu->kvm->arch.kvm_ops->load_from_eaddr)
 		rc = vcpu->kvm->arch.kvm_ops->load_from_eaddr(vcpu, eaddr, ptr,

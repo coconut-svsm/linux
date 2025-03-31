@@ -493,7 +493,7 @@ static void kvmppc_set_msr_pr(struct kvm_vcpu *vcpu, u64 msr)
 	if (msr & MSR_POW) {
 		if (!vcpu->arch.pending_exceptions) {
 			kvm_vcpu_halt(vcpu);
-			vcpu->stat.generic.halt_wakeup++;
+			vcpu->stat->generic.halt_wakeup++;
 
 			/* Unset POW bit after we woke up */
 			msr &= ~MSR_POW;
@@ -776,13 +776,13 @@ static int kvmppc_handle_pagefault(struct kvm_vcpu *vcpu,
 			return RESUME_HOST;
 		}
 		if (data)
-			vcpu->stat.sp_storage++;
+			vcpu->stat->sp_storage++;
 		else if (vcpu->arch.mmu.is_dcbz32(vcpu) &&
 			 (!(vcpu->arch.hflags & BOOK3S_HFLAG_DCBZ32)))
 			kvmppc_patch_dcbz(vcpu, &pte);
 	} else {
 		/* MMIO */
-		vcpu->stat.mmio_exits++;
+		vcpu->stat->mmio_exits++;
 		vcpu->arch.paddr_accessed = pte.raddr;
 		vcpu->arch.vaddr_accessed = pte.eaddr;
 		r = kvmppc_emulate_mmio(vcpu);
@@ -1103,7 +1103,7 @@ static int kvmppc_exit_pr_progint(struct kvm_vcpu *vcpu, unsigned int exit_nr)
 		}
 	}
 
-	vcpu->stat.emulated_inst_exits++;
+	vcpu->stat->emulated_inst_exits++;
 	er = kvmppc_emulate_instruction(vcpu);
 	switch (er) {
 	case EMULATE_DONE:
@@ -1138,7 +1138,7 @@ int kvmppc_handle_exit_pr(struct kvm_vcpu *vcpu, unsigned int exit_nr)
 	int r = RESUME_HOST;
 	int s;
 
-	vcpu->stat.sum_exits++;
+	vcpu->stat->sum_exits++;
 
 	run->exit_reason = KVM_EXIT_UNKNOWN;
 	run->ready_for_interrupt_injection = 1;
@@ -1152,7 +1152,7 @@ int kvmppc_handle_exit_pr(struct kvm_vcpu *vcpu, unsigned int exit_nr)
 	case BOOK3S_INTERRUPT_INST_STORAGE:
 	{
 		ulong shadow_srr1 = vcpu->arch.shadow_srr1;
-		vcpu->stat.pf_instruc++;
+		vcpu->stat->pf_instruc++;
 
 		if (kvmppc_is_split_real(vcpu))
 			kvmppc_fixup_split_real(vcpu);
@@ -1180,7 +1180,7 @@ int kvmppc_handle_exit_pr(struct kvm_vcpu *vcpu, unsigned int exit_nr)
 			int idx = srcu_read_lock(&vcpu->kvm->srcu);
 			r = kvmppc_handle_pagefault(vcpu, kvmppc_get_pc(vcpu), exit_nr);
 			srcu_read_unlock(&vcpu->kvm->srcu, idx);
-			vcpu->stat.sp_instruc++;
+			vcpu->stat->sp_instruc++;
 		} else if (vcpu->arch.mmu.is_dcbz32(vcpu) &&
 			  (!(vcpu->arch.hflags & BOOK3S_HFLAG_DCBZ32))) {
 			/*
@@ -1201,7 +1201,7 @@ int kvmppc_handle_exit_pr(struct kvm_vcpu *vcpu, unsigned int exit_nr)
 	{
 		ulong dar = kvmppc_get_fault_dar(vcpu);
 		u32 fault_dsisr = vcpu->arch.fault_dsisr;
-		vcpu->stat.pf_storage++;
+		vcpu->stat->pf_storage++;
 
 #ifdef CONFIG_PPC_BOOK3S_32
 		/* We set segments as unused segments when invalidating them. So
@@ -1256,13 +1256,13 @@ int kvmppc_handle_exit_pr(struct kvm_vcpu *vcpu, unsigned int exit_nr)
 	case BOOK3S_INTERRUPT_HV_DECREMENTER:
 	case BOOK3S_INTERRUPT_DOORBELL:
 	case BOOK3S_INTERRUPT_H_DOORBELL:
-		vcpu->stat.dec_exits++;
+		vcpu->stat->dec_exits++;
 		r = RESUME_GUEST;
 		break;
 	case BOOK3S_INTERRUPT_EXTERNAL:
 	case BOOK3S_INTERRUPT_EXTERNAL_HV:
 	case BOOK3S_INTERRUPT_H_VIRT:
-		vcpu->stat.ext_intr_exits++;
+		vcpu->stat->ext_intr_exits++;
 		r = RESUME_GUEST;
 		break;
 	case BOOK3S_INTERRUPT_HMI:
@@ -1331,7 +1331,7 @@ int kvmppc_handle_exit_pr(struct kvm_vcpu *vcpu, unsigned int exit_nr)
 			r = RESUME_GUEST;
 		} else {
 			/* Guest syscalls */
-			vcpu->stat.syscall_exits++;
+			vcpu->stat->syscall_exits++;
 			kvmppc_book3s_queue_irqprio(vcpu, exit_nr);
 			r = RESUME_GUEST;
 		}

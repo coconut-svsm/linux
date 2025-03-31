@@ -266,7 +266,7 @@ static void init_elf(const char *path)
 	}
 
 	/* mmap() the entire ELF file read-only at an arbitrary address. */
-	elf.begin = mmap(0, stat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	elf.begin = mmap(0, stat->st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (elf.begin == MAP_FAILED) {
 		close(fd);
 		fatal_perror("Could not mmap ELF file");
@@ -276,7 +276,7 @@ static void init_elf(const char *path)
 	close(fd);
 
 	/* Get pointer to the ELF header. */
-	assert_ge(stat.st_size, sizeof(*elf.ehdr), "%lu");
+	assert_ge(stat->st_size, sizeof(*elf.ehdr), "%lu");
 	elf.ehdr = elf_ptr(Elf64_Ehdr, 0);
 
 	/* Check the ELF magic. */

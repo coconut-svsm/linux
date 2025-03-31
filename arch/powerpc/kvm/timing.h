@@ -41,46 +41,46 @@ static inline void kvmppc_account_exit_stat(struct kvm_vcpu *vcpu, int type)
 	BUILD_BUG_ON(!__builtin_constant_p(type));
 	switch (type) {
 	case EXT_INTR_EXITS:
-		vcpu->stat.ext_intr_exits++;
+		vcpu->stat->ext_intr_exits++;
 		break;
 	case DEC_EXITS:
-		vcpu->stat.dec_exits++;
+		vcpu->stat->dec_exits++;
 		break;
 	case EMULATED_INST_EXITS:
-		vcpu->stat.emulated_inst_exits++;
+		vcpu->stat->emulated_inst_exits++;
 		break;
 	case DSI_EXITS:
-		vcpu->stat.dsi_exits++;
+		vcpu->stat->dsi_exits++;
 		break;
 	case ISI_EXITS:
-		vcpu->stat.isi_exits++;
+		vcpu->stat->isi_exits++;
 		break;
 	case SYSCALL_EXITS:
-		vcpu->stat.syscall_exits++;
+		vcpu->stat->syscall_exits++;
 		break;
 	case DTLB_REAL_MISS_EXITS:
-		vcpu->stat.dtlb_real_miss_exits++;
+		vcpu->stat->dtlb_real_miss_exits++;
 		break;
 	case DTLB_VIRT_MISS_EXITS:
-		vcpu->stat.dtlb_virt_miss_exits++;
+		vcpu->stat->dtlb_virt_miss_exits++;
 		break;
 	case MMIO_EXITS:
-		vcpu->stat.mmio_exits++;
+		vcpu->stat->mmio_exits++;
 		break;
 	case ITLB_REAL_MISS_EXITS:
-		vcpu->stat.itlb_real_miss_exits++;
+		vcpu->stat->itlb_real_miss_exits++;
 		break;
 	case ITLB_VIRT_MISS_EXITS:
-		vcpu->stat.itlb_virt_miss_exits++;
+		vcpu->stat->itlb_virt_miss_exits++;
 		break;
 	case SIGNAL_EXITS:
-		vcpu->stat.signal_exits++;
+		vcpu->stat->signal_exits++;
 		break;
 	case DBELL_EXITS:
-		vcpu->stat.dbell_exits++;
+		vcpu->stat->dbell_exits++;
 		break;
 	case GDBELL_EXITS:
-		vcpu->stat.gdbell_exits++;
+		vcpu->stat->gdbell_exits++;
 		break;
 	}
 }

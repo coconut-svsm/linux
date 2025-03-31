@@ -178,7 +178,7 @@ void kvmppc_book3s_dequeue_irqprio(struct kvm_vcpu *vcpu,
 
 void kvmppc_book3s_queue_irqprio(struct kvm_vcpu *vcpu, unsigned int vec)
 {
-	vcpu->stat.queue_intr++;
+	vcpu->stat->queue_intr++;
 
 	set_bit(kvmppc_book3s_vec2irqprio(vec),
 		&vcpu->arch.pending_exceptions);

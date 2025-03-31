@@ -24,7 +24,7 @@ DEFINE_SIMPLE_ATTRIBUTE(vcpu_timer_advance_ns_fops, vcpu_get_timer_advance_ns, N
 static int vcpu_get_guest_mode(void *data, u64 *val)
 {
 	struct kvm_vcpu *vcpu = (struct kvm_vcpu *) data;
-	*val = vcpu->stat.guest_mode;
+	*val = vcpu->stat->guest_mode;
 	return 0;
 }
 

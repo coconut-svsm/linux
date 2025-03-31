@@ -1234,7 +1234,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		ret = kvm_arm_vcpu_enter_exit(vcpu);
 
 		vcpu->mode = OUTSIDE_GUEST_MODE;
-		vcpu->stat.exits++;
+		vcpu->stat->exits++;
 		/*
 		 * Back from guest
 		 *************************************************************/

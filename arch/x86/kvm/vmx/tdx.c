@@ -816,7 +816,7 @@ static void tdx_prepare_switch_to_host(struct kvm_vcpu *vcpu)
 	if (!vt->guest_state_loaded)
 		return;
 
-	++vcpu->stat.host_state_reload;
+	++vcpu->stat->host_state_reload;
 	wrmsrl(MSR_KERNEL_GS_BASE, vt->msr_host_kernel_gs_base);
 
 	if (tdx->guest_entered) {
@@ -1085,7 +1085,7 @@ fastpath_t tdx_vcpu_run(struct kvm_vcpu *vcpu, u64 run_flags)
 
 void tdx_inject_nmi(struct kvm_vcpu *vcpu)
 {
-	++vcpu->stat.nmi_injections;
+	++vcpu->stat->nmi_injections;
 	td_management_write8(to_tdx(vcpu), TD_VCPU_PEND_NMI, 1);
 	/*
 	 * From KVM's perspective, NMI injection is completed right after
@@ -1326,7 +1326,7 @@ static int tdx_emulate_io(struct kvm_vcpu *vcpu)
 	u64 size, write;
 	int ret;
 
-	++vcpu->stat.io_exits;
+	++vcpu->stat->io_exits;
 
 	size = tdx->vp_enter_args.r12;
 	write = tdx->vp_enter_args.r13;
@@ -2087,7 +2087,7 @@ int tdx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t fastpath)
 	case EXIT_REASON_EXCEPTION_NMI:
 		return tdx_handle_exception_nmi(vcpu);
 	case EXIT_REASON_EXTERNAL_INTERRUPT:
-		++vcpu->stat.irq_exits;
+		++vcpu->stat->irq_exits;
 		return 1;
 	case EXIT_REASON_CPUID:
 		return tdx_emulate_cpuid(vcpu);

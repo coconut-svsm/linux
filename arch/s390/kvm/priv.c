@@ -31,7 +31,7 @@
 
 static int handle_ri(struct kvm_vcpu *vcpu)
 {
-	vcpu->stat.instruction_ri++;
+	vcpu->stat->instruction_ri++;
 
 	if (test_kvm_facility(vcpu->kvm, 64)) {
 		VCPU_EVENT(vcpu, 3, "%s", "ENABLE: RI (lazy)");
@@ -52,7 +52,7 @@ int kvm_s390_handle_aa(struct kvm_vcpu *vcpu)
 
 static int handle_gs(struct kvm_vcpu *vcpu)
 {
-	vcpu->stat.instruction_gs++;
+	vcpu->stat->instruction_gs++;
 
 	if (test_kvm_facility(vcpu->kvm, 133)) {
 		VCPU_EVENT(vcpu, 3, "%s", "ENABLE: GS (lazy)");
@@ -87,7 +87,7 @@ static int handle_set_clock(struct kvm_vcpu *vcpu)
 	u8 ar;
 	u64 op2;
 
-	vcpu->stat.instruction_sck++;
+	vcpu->stat->instruction_sck++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -126,7 +126,7 @@ static int handle_set_prefix(struct kvm_vcpu *vcpu)
 	int rc;
 	u8 ar;
 
-	vcpu->stat.instruction_spx++;
+	vcpu->stat->instruction_spx++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -164,7 +164,7 @@ static int handle_store_prefix(struct kvm_vcpu *vcpu)
 	int rc;
 	u8 ar;
 
-	vcpu->stat.instruction_stpx++;
+	vcpu->stat->instruction_stpx++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -194,7 +194,7 @@ static int handle_store_cpu_address(struct kvm_vcpu *vcpu)
 	int rc;
 	u8 ar;
 
-	vcpu->stat.instruction_stap++;
+	vcpu->stat->instruction_stap++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -261,7 +261,7 @@ static int handle_iske(struct kvm_vcpu *vcpu)
 	bool unlocked;
 	int rc;
 
-	vcpu->stat.instruction_iske++;
+	vcpu->stat->instruction_iske++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -308,7 +308,7 @@ static int handle_rrbe(struct kvm_vcpu *vcpu)
 	bool unlocked;
 	int rc;
 
-	vcpu->stat.instruction_rrbe++;
+	vcpu->stat->instruction_rrbe++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -359,7 +359,7 @@ static int handle_sske(struct kvm_vcpu *vcpu)
 	bool unlocked;
 	int rc;
 
-	vcpu->stat.instruction_sske++;
+	vcpu->stat->instruction_sske++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -438,7 +438,7 @@ static int handle_sske(struct kvm_vcpu *vcpu)
 
 static int handle_ipte_interlock(struct kvm_vcpu *vcpu)
 {
-	vcpu->stat.instruction_ipte_interlock++;
+	vcpu->stat->instruction_ipte_interlock++;
 	if (psw_bits(vcpu->arch.sie_block->gpsw).pstate)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
 	wait_event(vcpu->kvm->arch.ipte_wq, !ipte_lock_held(vcpu->kvm));
@@ -452,7 +452,7 @@ static int handle_test_block(struct kvm_vcpu *vcpu)
 	gpa_t addr;
 	int reg2;
 
-	vcpu->stat.instruction_tb++;
+	vcpu->stat->instruction_tb++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -486,7 +486,7 @@ static int handle_tpi(struct kvm_vcpu *vcpu)
 	u64 addr;
 	u8 ar;
 
-	vcpu->stat.instruction_tpi++;
+	vcpu->stat->instruction_tpi++;
 
 	addr = kvm_s390_get_base_disp_s(vcpu, &ar);
 	if (addr & 3)
@@ -548,7 +548,7 @@ static int handle_tsch(struct kvm_vcpu *vcpu)
 	struct kvm_s390_interrupt_info *inti = NULL;
 	const u64 isc_mask = 0xffUL << 24; /* all iscs set */
 
-	vcpu->stat.instruction_tsch++;
+	vcpu->stat->instruction_tsch++;
 
 	/* a valid schid has at least one bit set */
 	if (vcpu->run->s.regs.gprs[1])
@@ -593,7 +593,7 @@ static int handle_io_inst(struct kvm_vcpu *vcpu)
 		if (vcpu->arch.sie_block->ipa == 0xb235)
 			return handle_tsch(vcpu);
 		/* Handle in userspace. */
-		vcpu->stat.instruction_io_other++;
+		vcpu->stat->instruction_io_other++;
 		return -EOPNOTSUPP;
 	} else {
 		/*
@@ -702,7 +702,7 @@ static int handle_stfl(struct kvm_vcpu *vcpu)
 	int rc;
 	unsigned int fac;
 
-	vcpu->stat.instruction_stfl++;
+	vcpu->stat->instruction_stfl++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -751,7 +751,7 @@ int kvm_s390_handle_lpsw(struct kvm_vcpu *vcpu)
 	int rc;
 	u8 ar;
 
-	vcpu->stat.instruction_lpsw++;
+	vcpu->stat->instruction_lpsw++;
 
 	if (gpsw->mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -780,7 +780,7 @@ static int handle_lpswe(struct kvm_vcpu *vcpu)
 	int rc;
 	u8 ar;
 
-	vcpu->stat.instruction_lpswe++;
+	vcpu->stat->instruction_lpswe++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -804,7 +804,7 @@ static int handle_lpswey(struct kvm_vcpu *vcpu)
 	int rc;
 	u8 ar;
 
-	vcpu->stat.instruction_lpswey++;
+	vcpu->stat->instruction_lpswey++;
 
 	if (!test_kvm_facility(vcpu->kvm, 193))
 		return kvm_s390_inject_program_int(vcpu, PGM_OPERATION);
@@ -834,7 +834,7 @@ static int handle_stidp(struct kvm_vcpu *vcpu)
 	int rc;
 	u8 ar;
 
-	vcpu->stat.instruction_stidp++;
+	vcpu->stat->instruction_stidp++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -900,7 +900,7 @@ static int handle_stsi(struct kvm_vcpu *vcpu)
 	int rc = 0;
 	u8 ar;
 
-	vcpu->stat.instruction_stsi++;
+	vcpu->stat->instruction_stsi++;
 	VCPU_EVENT(vcpu, 3, "STSI: fc: %u sel1: %u sel2: %u", fc, sel1, sel2);
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
@@ -1044,7 +1044,7 @@ static int handle_epsw(struct kvm_vcpu *vcpu)
 {
 	int reg1, reg2;
 
-	vcpu->stat.instruction_epsw++;
+	vcpu->stat->instruction_epsw++;
 
 	kvm_s390_get_regs_rre(vcpu, &reg1, &reg2);
 
@@ -1076,7 +1076,7 @@ static int handle_pfmf(struct kvm_vcpu *vcpu)
 	unsigned long start, end;
 	unsigned char key;
 
-	vcpu->stat.instruction_pfmf++;
+	vcpu->stat->instruction_pfmf++;
 
 	kvm_s390_get_regs_rre(vcpu, &reg1, &reg2);
 
@@ -1258,7 +1258,7 @@ static int handle_essa(struct kvm_vcpu *vcpu)
 
 	VCPU_EVENT(vcpu, 4, "ESSA: release %d pages", entries);
 	gmap = vcpu->arch.gmap;
-	vcpu->stat.instruction_essa++;
+	vcpu->stat->instruction_essa++;
 	if (!vcpu->kvm->arch.use_cmma)
 		return kvm_s390_inject_program_int(vcpu, PGM_OPERATION);
 
@@ -1343,7 +1343,7 @@ int kvm_s390_handle_lctl(struct kvm_vcpu *vcpu)
 	u64 ga;
 	u8 ar;
 
-	vcpu->stat.instruction_lctl++;
+	vcpu->stat->instruction_lctl++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -1382,7 +1382,7 @@ int kvm_s390_handle_stctl(struct kvm_vcpu *vcpu)
 	u64 ga;
 	u8 ar;
 
-	vcpu->stat.instruction_stctl++;
+	vcpu->stat->instruction_stctl++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -1416,7 +1416,7 @@ static int handle_lctlg(struct kvm_vcpu *vcpu)
 	u64 ga;
 	u8 ar;
 
-	vcpu->stat.instruction_lctlg++;
+	vcpu->stat->instruction_lctlg++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -1454,7 +1454,7 @@ static int handle_stctg(struct kvm_vcpu *vcpu)
 	u64 ga;
 	u8 ar;
 
-	vcpu->stat.instruction_stctg++;
+	vcpu->stat->instruction_stctg++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -1506,7 +1506,7 @@ static int handle_tprot(struct kvm_vcpu *vcpu)
 	int ret, cc;
 	u8 ar;
 
-	vcpu->stat.instruction_tprot++;
+	vcpu->stat->instruction_tprot++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -1570,7 +1570,7 @@ static int handle_sckpf(struct kvm_vcpu *vcpu)
 {
 	u32 value;
 
-	vcpu->stat.instruction_sckpf++;
+	vcpu->stat->instruction_sckpf++;
 
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)
 		return kvm_s390_inject_program_int(vcpu, PGM_PRIVILEGED_OP);
@@ -1587,7 +1587,7 @@ static int handle_sckpf(struct kvm_vcpu *vcpu)
 
 static int handle_ptff(struct kvm_vcpu *vcpu)
 {
-	vcpu->stat.instruction_ptff++;
+	vcpu->stat->instruction_ptff++;
 
 	/* we don't emulate any control instructions yet */
 	kvm_s390_set_psw_cc(vcpu, 3);

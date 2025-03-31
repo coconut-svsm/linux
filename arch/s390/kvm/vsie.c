@@ -1470,7 +1470,7 @@ int kvm_s390_handle_vsie(struct kvm_vcpu *vcpu)
 	unsigned long scb_addr;
 	int rc;
 
-	vcpu->stat.instruction_sie++;
+	vcpu->stat->instruction_sie++;
 	if (!test_kvm_cpu_feat(vcpu->kvm, KVM_S390_VM_CPU_FEAT_SIEF2))
 		return -EOPNOTSUPP;
 	if (vcpu->arch.sie_block->gpsw.mask & PSW_MASK_PSTATE)

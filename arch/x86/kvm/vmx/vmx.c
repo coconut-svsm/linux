@@ -1313,7 +1313,7 @@ static void vmx_prepare_switch_to_host(struct vcpu_vmx *vmx)
 
 	host_state = &vmx->loaded_vmcs->host_state;
 
-	++vmx->vcpu.stat.host_state_reload;
+	++vmx->vcpu.stat->host_state_reload;
 
 #ifdef CONFIG_X86_64
 	rdmsrq(MSR_KERNEL_GS_BASE, vmx->msr_guest_kernel_gs_base);
@@ -4848,7 +4848,7 @@ void vmx_inject_irq(struct kvm_vcpu *vcpu, bool reinjected)
 
 	trace_kvm_inj_virq(irq, vcpu->arch.interrupt.soft, reinjected);
 
-	++vcpu->stat.irq_injections;
+	++vcpu->stat->irq_injections;
 	if (vmx->rmode.vm86_active) {
 		int inc_eip = 0;
 		if (vcpu->arch.interrupt.soft)
@@ -4885,7 +4885,7 @@ void vmx_inject_nmi(struct kvm_vcpu *vcpu)
 		vmx->loaded_vmcs->vnmi_blocked_time = 0;
 	}
 
-	++vcpu->stat.nmi_injections;
+	++vcpu->stat->nmi_injections;
 	vmx->loaded_vmcs->nmi_known_unmasked = false;
 
 	if (vmx->rmode.vm86_active) {
@@ -5279,7 +5279,7 @@ static int handle_exception_nmi(struct kvm_vcpu *vcpu)
 
 static __always_inline int handle_external_interrupt(struct kvm_vcpu *vcpu)
 {
-	++vcpu->stat.irq_exits;
+	++vcpu->stat->irq_exits;
 	return 1;
 }
 
@@ -5299,7 +5299,7 @@ static int handle_io(struct kvm_vcpu *vcpu)
 	exit_qualification = vmx_get_exit_qual(vcpu);
 	string = (exit_qualification & 16) != 0;
 
-	++vcpu->stat.io_exits;
+	++vcpu->stat->io_exits;
 
 	if (string)
 		return kvm_emulate_instruction(vcpu, 0);
@@ -5553,7 +5553,7 @@ static int handle_interrupt_window(struct kvm_vcpu *vcpu)
 
 	kvm_make_request(KVM_REQ_EVENT, vcpu);
 
-	++vcpu->stat.irq_window_exits;
+	++vcpu->stat->irq_window_exits;
 	return 1;
 }
 
@@ -5731,7 +5731,7 @@ static int handle_nmi_window(struct kvm_vcpu *vcpu)
 		return -EIO;
 
 	exec_controls_clearbit(to_vmx(vcpu), CPU_BASED_NMI_WINDOW_EXITING);
-	++vcpu->stat.nmi_window_exits;
+	++vcpu->stat->nmi_window_exits;
 	kvm_make_request(KVM_REQ_EVENT, vcpu);
 
 	return 1;
@@ -5982,7 +5982,7 @@ static int handle_notify(struct kvm_vcpu *vcpu)
 	unsigned long exit_qual = vmx_get_exit_qual(vcpu);
 	bool context_invalid = exit_qual & NOTIFY_VM_CONTEXT_INVALID;
 
-	++vcpu->stat.notify_window_exits;
+	++vcpu->stat->notify_window_exits;
 
 	/*
 	 * Notify VM exit happened while executing iret from NMI,
@@ -6586,7 +6586,7 @@ static noinstr void vmx_l1d_flush(struct kvm_vcpu *vcpu)
 			return;
 	}
 
-	vcpu->stat.l1d_flush++;
+	vcpu->stat->l1d_flush++;
 
 	if (static_cpu_has(X86_FEATURE_FLUSH_L1D)) {
 		native_wrmsrq(MSR_IA32_FLUSH_CMD, L1D_FLUSH);
@@ -7381,7 +7381,7 @@ fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu, u64 run_flags)
 		 */
 		if (vmx->nested.nested_run_pending &&
 		    !vmx_get_exit_reason(vcpu).failed_vmentry)
-			++vcpu->stat.nested_run;
+			++vcpu->stat->nested_run;
 
 		vmx->nested.nested_run_pending = 0;
 	}

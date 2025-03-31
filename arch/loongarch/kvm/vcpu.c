@@ -337,7 +337,7 @@ static int kvm_handle_exit(struct kvm_run *run, struct kvm_vcpu *vcpu)
 		ret = kvm_handle_fault(vcpu, ecode);
 	} else {
 		WARN(!intr, "vm exiting with suspicious irq\n");
-		++vcpu->stat.int_exits;
+		++vcpu->stat->int_exits;
 	}
 
 	if (ret == RESUME_GUEST)

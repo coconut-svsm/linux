@@ -31,7 +31,7 @@ static int kvm_emu_cpucfg(struct kvm_vcpu *vcpu, larch_inst inst)
 
 	rd = inst.reg2_format.rd;
 	rj = inst.reg2_format.rj;
-	++vcpu->stat.cpucfg_exits;
+	++vcpu->stat->cpucfg_exits;
 	index = vcpu->arch.gprs[rj];
 
 	/*
@@ -264,7 +264,7 @@ int kvm_complete_iocsr_read(struct kvm_vcpu *vcpu, struct kvm_run *run)
 
 int kvm_emu_idle(struct kvm_vcpu *vcpu)
 {
-	++vcpu->stat.idle_exits;
+	++vcpu->stat->idle_exits;
 	trace_kvm_exit_idle(vcpu, KVM_TRACE_EXIT_IDLE);
 
 	if (!kvm_arch_vcpu_runnable(vcpu))
@@ -880,7 +880,7 @@ static int kvm_handle_hypercall(struct kvm_vcpu *vcpu, int ecode)
 
 	switch (code) {
 	case KVM_HCALL_SERVICE:
-		vcpu->stat.hypercall_exits++;
+		vcpu->stat->hypercall_exits++;
 		kvm_handle_service(vcpu);
 		break;
 	case KVM_HCALL_USER_SERVICE:
@@ -889,7 +889,7 @@ static int kvm_handle_hypercall(struct kvm_vcpu *vcpu, int ecode)
 			break;
 		}
 
-		vcpu->stat.hypercall_exits++;
+		vcpu->stat->hypercall_exits++;
 		vcpu->run->exit_reason = KVM_EXIT_HYPERCALL;
 		vcpu->run->hypercall.nr = KVM_HCALL_USER_SERVICE;
 		vcpu->run->hypercall.args[0] = kvm_read_reg(vcpu, LOONGARCH_GPR_A0);
