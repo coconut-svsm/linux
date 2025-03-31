@@ -488,6 +488,29 @@ u64 kvm_vcpu_reserved_gpa_bits_raw(struct kvm_vcpu *vcpu)
 	return rsvd_bits(cpuid_maxphyaddr(vcpu), 63);
 }
 
+int kvm_post_set_cpuid(struct kvm_vcpu *vcpu)
+{
+	int r;
+
+#ifdef CONFIG_KVM_HYPERV
+	if (kvm_cpuid_has_hyperv(vcpu)) {
+		r = kvm_hv_vcpu_init(vcpu);
+		if (r)
+			return r;
+	}
+#endif
+
+	r = kvm_check_cpuid(vcpu);
+	if (r)
+		return r;
+
+#ifdef CONFIG_KVM_XEN
+	vcpu->arch.xen.cpuid = kvm_get_hypervisor_cpuid(vcpu, XEN_SIGNATURE);
+#endif
+	kvm_vcpu_after_set_cpuid(vcpu);
+	return 0;
+}
+
 static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
                         int nent)
 {
@@ -529,22 +552,9 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
 		goto success;
 	}
 
-#ifdef CONFIG_KVM_HYPERV
-	if (kvm_cpuid_has_hyperv(vcpu)) {
-		r = kvm_hv_vcpu_init(vcpu);
-		if (r)
-			goto err;
-	}
-#endif
-
-	r = kvm_check_cpuid(vcpu);
+	r = kvm_post_set_cpuid(vcpu);
 	if (r)
 		goto err;
-
-#ifdef CONFIG_KVM_XEN
-	vcpu->arch.xen.cpuid = kvm_get_hypervisor_cpuid(vcpu, XEN_SIGNATURE);
-#endif
-	kvm_vcpu_after_set_cpuid(vcpu);
 
 success:
 	kvfree(e2);
