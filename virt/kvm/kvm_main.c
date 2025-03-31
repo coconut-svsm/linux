@@ -4255,20 +4255,20 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 	}
 	vcpu->run = page_address(page);
 
+	if (kvm->dirty_ring_size) {
+		r = kvm_dirty_ring_alloc(kvm, &vcpu->dirty_ring,
+					 id, kvm->dirty_ring_size);
+		if (r)
+			goto vcpu_free_run_page;
+	}
+
 	vcpu->plane0 = vcpu;
 	vcpu->stat = &vcpu->__stat;
 	kvm_vcpu_init(vcpu, kvm, id);
 
 	r = kvm_arch_vcpu_create(vcpu);
 	if (r)
-		goto vcpu_free_run_page;
-
-	if (kvm->dirty_ring_size) {
-		r = kvm_dirty_ring_alloc(kvm, &vcpu->dirty_ring,
-					 id, kvm->dirty_ring_size);
-		if (r)
-			goto arch_vcpu_destroy;
-	}
+		goto vcpu_free_dirty_ring;
 
 	mutex_lock(&kvm->lock);
 
@@ -4322,9 +4322,9 @@ kvm_put_xa_erase:
 	xa_erase(&kvm->planes[0]->vcpu_array, vcpu->vcpu_idx);
 unlock_vcpu_destroy:
 	mutex_unlock(&kvm->lock);
-	kvm_dirty_ring_free(&vcpu->dirty_ring);
-arch_vcpu_destroy:
 	kvm_arch_vcpu_destroy(vcpu);
+vcpu_free_dirty_ring:
+	kvm_dirty_ring_free(&vcpu->dirty_ring);
 vcpu_free_run_page:
 	free_page((unsigned long)vcpu->run);
 vcpu_free:
