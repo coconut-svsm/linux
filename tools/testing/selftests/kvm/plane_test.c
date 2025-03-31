@@ -47,20 +47,19 @@ void test_create_plane(void)
 {
 	struct kvm_vm *vm;
 	struct kvm_vcpu *vcpu;
-	int r, planefd, plane_vcpufd;
+	struct kvm_plane *plane;
+	int r;
 
 	vm = vm_create_barebones();
 	vcpu = __vm_vcpu_add(vm, 0);
 
-	planefd = __vm_ioctl(vm, KVM_CREATE_PLANE, (void *)(unsigned long)1);
-	TEST_ASSERT(planefd >= 0, "Creating new plane, got error: %d",
-		    errno);
+	plane = vm_plane_add(vm, 1);
 
-	r = ioctl(planefd, KVM_CHECK_EXTENSION, KVM_CAP_PLANES);
+	r = __plane_ioctl(plane, KVM_CHECK_EXTENSION, (void *)(unsigned long)KVM_CAP_PLANES);
 	TEST_ASSERT(r == 0,
 		    "Checking KVM_CHECK_EXTENSION(KVM_CAP_PLANES). ret: %d", r);
 
-	r = ioctl(planefd, KVM_CHECK_EXTENSION, KVM_CAP_CHECK_EXTENSION_VM);
+	r = __plane_ioctl(plane, KVM_CHECK_EXTENSION, (void *)(unsigned long)KVM_CAP_CHECK_EXTENSION_VM);
 	TEST_ASSERT(r == 1,
 		    "Checking KVM_CHECK_EXTENSION(KVM_CAP_CHECK_EXTENSION_VM). ret: %d", r);
 
@@ -69,21 +68,17 @@ void test_create_plane(void)
 		    "Creating existing plane, expecting EEXIST. ret: %d, errno: %d",
 		    r, errno);
 
-	plane_vcpufd = ioctl(planefd, KVM_CREATE_VCPU_PLANE, (void *)(unsigned long)vcpu->fd);
-	TEST_ASSERT(plane_vcpufd >= 0, "Creating vCPU for plane 1, got error: %d", errno);
+	__vm_plane_vcpu_add(vcpu, plane);
 
-	r = ioctl(planefd, KVM_CREATE_VCPU_PLANE, (void *)(unsigned long)vcpu->fd);
+	r = __plane_ioctl(plane, KVM_CREATE_VCPU_PLANE, (void *)(unsigned long)vcpu->fd);
 	TEST_ASSERT(r == -1 && errno == EEXIST,
 		    "Creating vCPU again for plane 1. ret: %d, errno: %d",
 		    r, errno);
 
-	r = ioctl(planefd, KVM_RUN, (void *)(unsigned long)0);
+	r = __plane_ioctl(plane, KVM_RUN, (void *)(unsigned long)0);
 	TEST_ASSERT(r == -1 && errno == ENOTTY,
 		    "Running plane vCPU again for plane 1. ret: %d, errno: %d",
 		    r, errno);
-
-	close(plane_vcpufd);
-	close(planefd);
 
 	kvm_vm_free(vm);
 	ksft_test_result_pass("basic planefd and plane_vcpufd operation\n");

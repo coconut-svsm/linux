@@ -296,6 +296,8 @@ struct kvm_vm *____vm_create(struct vm_shape shape)
 	TEST_ASSERT(vm != NULL, "Insufficient Memory");
 
 	INIT_LIST_HEAD(&vm->vcpus);
+	INIT_LIST_HEAD(&vm->planes);
+	INIT_LIST_HEAD(&vm->plane_vcpus);
 	vm->regions.gpa_tree = RB_ROOT;
 	vm->regions.hva_tree = RB_ROOT;
 	hash_init(vm->regions.slot_hash);
@@ -791,10 +793,22 @@ static void vm_vcpu_rm(struct kvm_vm *vm, struct kvm_vcpu *vcpu)
 
 void kvm_vm_release(struct kvm_vm *vmp)
 {
-	struct kvm_vcpu *vcpu, *tmp;
+	struct kvm_vcpu *vcpu, *tmp_vcpu;
+	struct kvm_plane_vcpu *plane_vcpu, *tmp_plane_vcpu;
+	struct kvm_plane *plane, *tmp_plane;
 	int ret;
 
-	list_for_each_entry_safe(vcpu, tmp, &vmp->vcpus, list)
+	list_for_each_entry_safe(plane_vcpu, tmp_plane_vcpu, &vmp->plane_vcpus, list) {
+		close(plane_vcpu->fd);
+		free(plane_vcpu);
+	}
+
+	list_for_each_entry_safe(plane, tmp_plane, &vmp->planes, list) {
+		close(plane->fd);
+		free(plane);
+	}
+
+	list_for_each_entry_safe(vcpu, tmp_vcpu, &vmp->vcpus, list)
 		vm_vcpu_rm(vmp, vcpu);
 
 	ret = close(vmp->fd);
@@ -1346,6 +1360,52 @@ static bool vcpu_exists(struct kvm_vm *vm, uint32_t vcpu_id)
 	}
 
 	return false;
+}
+
+/*
+ * Adds a virtual CPU to the VM specified by vm with the ID given by vcpu_id.
+ * No additional vCPU setup is done.  Returns the vCPU.
+ */
+struct kvm_plane *vm_plane_add(struct kvm_vm *vm, int plane_id)
+{
+	struct kvm_plane *plane;
+
+	/* Allocate and initialize new vcpu structure. */
+	plane = calloc(1, sizeof(*plane));
+	TEST_ASSERT(plane != NULL, "Insufficient Memory");
+
+	plane->fd = __vm_ioctl(vm, KVM_CREATE_PLANE, (void *)(unsigned long)plane_id);
+	TEST_ASSERT_VM_VCPU_IOCTL(plane->fd >= 0, KVM_CREATE_PLANE, plane->fd, vm);
+	plane->vm = vm;
+	plane->id = plane_id;
+
+	/* Add to linked-list of extra-plane VCPUs. */
+	list_add(&plane->list, &vm->planes);
+
+	return plane;
+}
+
+/*
+ * Adds a virtual CPU to the VM specified by vm with the ID given by vcpu_id.
+ * No additional vCPU setup is done.  Returns the vCPU.
+ */
+struct kvm_plane_vcpu *__vm_plane_vcpu_add(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
+{
+	struct kvm_plane_vcpu *plane_vcpu;
+
+	/* Allocate and initialize new vcpu structure. */
+	plane_vcpu = calloc(1, sizeof(*plane_vcpu));
+	TEST_ASSERT(plane_vcpu != NULL, "Insufficient Memory");
+
+	plane_vcpu->fd = __plane_ioctl(plane, KVM_CREATE_VCPU_PLANE, (void *)(unsigned long)vcpu->fd);
+	TEST_ASSERT_VM_VCPU_IOCTL(plane_vcpu->fd >= 0, KVM_CREATE_VCPU_PLANE, plane_vcpu->fd, plane->vm);
+	plane_vcpu->id = vcpu->id;
+	plane_vcpu->plane0 = vcpu;
+
+	/* Add to linked-list of extra-plane VCPUs. */
+	list_add(&plane_vcpu->list, &plane->vm->plane_vcpus);
+
+	return plane_vcpu;
 }
 
 /*
@@ -2066,6 +2126,7 @@ static struct exit_reason {
 	KVM_EXIT_STRING(NOTIFY),
 	KVM_EXIT_STRING(LOONGARCH_IOCSR),
 	KVM_EXIT_STRING(MEMORY_FAULT),
+	KVM_EXIT_STRING(PLANE_EVENT),
 };
 
 /*
