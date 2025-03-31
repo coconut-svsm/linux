@@ -764,6 +764,7 @@ struct kvm_memslots {
 
 struct kvm_plane {
 	struct kvm *kvm;
+	struct xarray vcpu_array;
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 	/* Protected by slots_locks (for writes) and RCU (for reads) */
 	struct xarray mem_attr_array;
@@ -796,7 +797,6 @@ struct kvm {
 	struct kvm_memslots __memslots[KVM_MAX_NR_ADDRESS_SPACES][2];
 	/* The current active memslot set for each address space */
 	struct kvm_memslots __rcu *memslots[KVM_MAX_NR_ADDRESS_SPACES];
-	struct xarray vcpu_array;
 
 	struct kvm_plane *planes[KVM_MAX_VCPU_PLANES];
 
@@ -991,20 +991,20 @@ static inline struct kvm_io_bus *kvm_get_bus(struct kvm *kvm, enum kvm_bus idx)
 				      !refcount_read(&kvm->users_count));
 }
 
-static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
+static inline struct kvm_vcpu *kvm_get_plane_vcpu(struct kvm_plane *plane, int i)
 {
-	struct kvm_vcpu *vcpu = xa_load(&kvm->vcpu_array, i);
+	struct kvm_vcpu *vcpu = xa_load(&plane->vcpu_array, i);
 	if (vcpu && unlikely(vcpu->plane == -1))
 		return NULL;
 
 	return vcpu;
 }
 
-#define kvm_for_each_vcpu(idx, vcpup, kvm)			\
-	xa_for_each(&kvm->vcpu_array, idx, vcpup)		\
+#define kvm_for_each_plane_vcpu(idx, vcpup, plane_)				\
+	xa_for_each(&(plane_)->vcpu_array, idx, vcpup)		\
 		if ((vcpup)->plane == -1) ; else		\
 
-static inline struct kvm_vcpu *kvm_get_vcpu_by_id(struct kvm *kvm, int id)
+static inline struct kvm_vcpu *kvm_get_plane_vcpu_by_id(struct kvm_plane *plane, int id)
 {
 	struct kvm_vcpu *vcpu = NULL;
 	unsigned long i;
@@ -1012,13 +1012,26 @@ static inline struct kvm_vcpu *kvm_get_vcpu_by_id(struct kvm *kvm, int id)
 	if (id < 0)
 		return NULL;
 	if (id < KVM_MAX_VCPUS)
-		vcpu = kvm_get_vcpu(kvm, id);
+		vcpu = kvm_get_plane_vcpu(plane, id);
 	if (vcpu && vcpu->vcpu_id == id)
 		return vcpu;
-	kvm_for_each_vcpu(i, vcpu, kvm)
+	kvm_for_each_plane_vcpu(i, vcpu, plane)
 		if (vcpu->vcpu_id == id)
 			return vcpu;
 	return NULL;
+}
+
+static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
+{
+	return kvm_get_plane_vcpu(kvm->planes[0], i);
+}
+
+#define kvm_for_each_vcpu(idx, vcpup, kvm)				\
+	kvm_for_each_plane_vcpu(idx, vcpup, kvm->planes[0])
+
+static inline struct kvm_vcpu *kvm_get_vcpu_by_id(struct kvm *kvm, int id)
+{
+	return kvm_get_plane_vcpu_by_id(kvm->planes[0], id);
 }
 
 void kvm_destroy_vcpus(struct kvm *kvm);
