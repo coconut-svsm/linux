@@ -1008,4 +1008,6 @@ struct kvm_tdx_init_mem_region {
 	__u64 nr_pages;
 };
 
+#define KVM_MAX_VCPU_PLANES	16
+
 #endif /* _ASM_X86_KVM_H */
