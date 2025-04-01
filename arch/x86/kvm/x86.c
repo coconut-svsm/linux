@@ -10862,6 +10862,19 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 				goto out;
 			}
 		}
+		if (kvm_check_request(KVM_REQ_PLANE_INTERRUPT, vcpu)) {
+			u16 irr_pending_planes = atomic_read(&vcpu->plane0->arch.irr_pending_planes);
+			u16 target = irr_pending_planes & vcpu->plane0->req_exit_planes;
+			if (target) {
+				vcpu->run->exit_reason = KVM_EXIT_PLANE_EVENT;
+				vcpu->run->plane_event.cause = KVM_PLANE_EVENT_INTERRUPT;
+				vcpu->run->plane_event.flags = 0;
+				vcpu->run->plane_event.pending_event_planes = irr_pending_planes;
+				vcpu->run->plane_event.target = target;
+				r = 0;
+				goto out;
+			}
+		}
 	}
 
 	if (kvm_check_request(KVM_REQ_EVENT, vcpu) || req_int_win ||
@@ -11637,8 +11650,11 @@ out:
 
 int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 {
+	struct kvm_vcpu *plane0_vcpu = vcpu;
 	int plane_id = READ_ONCE(vcpu->run->plane);
 	struct kvm_plane *plane = vcpu->kvm->planes[plane_id];
+	u16 req_exit_planes = READ_ONCE(vcpu->run->req_exit_planes) & ~BIT(plane_id);
+	u16 irr_pending_planes;
 	int r;
 
 	if (plane_id) {
@@ -11646,7 +11662,39 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		mutex_lock_nested(&vcpu->mutex, 1);
 	}
 
+	if (plane0_vcpu->has_planes) {
+		plane0_vcpu->req_exit_planes = req_exit_planes;
+		plane0_vcpu->running_plane = plane;
+
+		/*
+		 * Check for cross-plane interrupts that happened while outside KVM_RUN;
+		 * write running_plane and req_exit_planes before reading irr_pending_planes.
+		 * If an interrupt hasn't set irr_pending_planes yet, it will trigger
+		 * KVM_REQ_PLANE_INTERRUPT itself in kvm_lapic_deliver_interrupt().
+		 */
+		smp_mb__before_atomic();
+
+		irr_pending_planes = atomic_fetch_and(~BIT(plane_id), &plane0_vcpu->arch.irr_pending_planes);
+		if (req_exit_planes & irr_pending_planes)
+			kvm_make_request(KVM_REQ_PLANE_INTERRUPT, vcpu);
+	}
+
 	r = kvm_vcpu_ioctl_run_plane(vcpu);
+
+	if (plane0_vcpu->has_planes) {
+		smp_store_release(&plane0_vcpu->running_plane, NULL);
+
+		/*
+		 * Clear irr_pending_planes before reading IRR; pairs with
+		 * kvm_lapic_deliver_interrupt().  If this side doesn't see IRR set,
+		 * the other side will certainly see the cleared bit irr_pending_planes
+		 * and set it, and vice versa.
+		 */
+		atomic_and(~BIT(plane_id), &plane0_vcpu->arch.irr_pending_planes);
+		smp_mb__after_atomic();
+		if (kvm_lapic_find_highest_irr(vcpu))
+			atomic_or(BIT(plane_id), &plane0_vcpu->arch.irr_pending_planes);
+	}
 
 	if (plane_id)
 		mutex_unlock(&vcpu->mutex);

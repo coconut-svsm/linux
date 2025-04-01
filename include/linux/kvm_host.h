@@ -347,6 +347,8 @@ struct kvm_vcpu {
 	/* Only valid on plane 0 */
 	bool has_planes;
 	bool wants_to_run;
+	u16 req_exit_planes;
+	struct kvm_plane *running_plane;
 
 	/* Shared for all planes */
 	struct kvm_run *run;
