@@ -5398,6 +5398,7 @@ static int kvm_vm_ioctl_create_plane(struct kvm *kvm, unsigned id)
 		return fd;
 
 	plane = kvm_create_vm_plane(kvm, id);
+	kvm->has_planes = true;
 	if (IS_ERR(plane)) {
 		r = PTR_ERR(plane);
 		goto put_fd;

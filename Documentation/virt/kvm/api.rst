@@ -882,6 +882,8 @@ On s390, a dummy irq routing table is created.
 Note that on s390 the KVM_CAP_S390_IRQCHIP vm capability needs to be enabled
 before KVM_CREATE_IRQCHIP can be used.
 
+The interrupt controller must be created before any extra VM planes.
+
 
 4.25 KVM_IRQ_LINE
 -----------------
@@ -7876,8 +7878,8 @@ used in the IRQ routing table.  The first args[0] MSI routes are reserved
 for the IOAPIC pins.  Whenever the LAPIC receives an EOI for these routes,
 a KVM_EXIT_IOAPIC_EOI vmexit will be reported to userspace.
 
-Fails if VCPU has already been created, or if the irqchip is already in the
-kernel (i.e. KVM_CREATE_IRQCHIP has already been called).
+Fails if VCPUs or planes have already been created, or if the irqchip is
+already in the kernel (i.e. KVM_CREATE_IRQCHIP has already been called).
 
 7.6 KVM_CAP_S390_RI
 -------------------
