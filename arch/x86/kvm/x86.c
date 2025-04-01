@@ -10529,6 +10529,7 @@ void __kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
 				      enum kvm_apicv_inhibit reason, bool set)
 {
 	unsigned long old, new;
+	bool changed;
 
 	lockdep_assert_held_write(&kvm->arch.apicv_update_lock);
 
@@ -10536,10 +10537,10 @@ void __kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
 		return;
 
 	old = new = kvm->arch.apicv_inhibit_reasons;
-
 	set_or_clear_apicv_inhibit(&new, reason, set);
+	changed = (!!old != !!new);
 
-	if (!!old != !!new) {
+	if (changed) {
 		/*
 		 * Kick all vCPUs before setting apicv_inhibit_reasons to avoid
 		 * false positives in the sanity check WARN in vcpu_enter_guest().
@@ -10553,16 +10554,16 @@ void __kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
 		 * servicing the request with a stale apicv_inhibit_reasons.
 		 */
 		kvm_make_all_cpus_request(kvm, KVM_REQ_APICV_UPDATE);
-		kvm->arch.apicv_inhibit_reasons = new;
-		if (new) {
-			unsigned long gfn = gpa_to_gfn(APIC_DEFAULT_PHYS_BASE);
-			int idx = srcu_read_lock(&kvm->srcu);
+	}
 
-			kvm_zap_gfn_range(kvm, gfn, gfn+1);
-			srcu_read_unlock(&kvm->srcu, idx);
-		}
-	} else {
-		kvm->arch.apicv_inhibit_reasons = new;
+	kvm->arch.apicv_inhibit_reasons = new;
+
+	if (changed && set) {
+		unsigned long gfn = gpa_to_gfn(APIC_DEFAULT_PHYS_BASE);
+		int idx = srcu_read_lock(&kvm->srcu);
+
+		kvm_zap_gfn_range(kvm, gfn, gfn+1);
+		srcu_read_unlock(&kvm->srcu, idx);
 	}
 }
 
