@@ -1098,6 +1098,10 @@ struct kvm_arch_memory_slot {
 };
 
 struct kvm_arch_plane {
+	struct mutex apic_map_lock;
+	struct kvm_apic_map __rcu *apic_map;
+	atomic_t apic_map_dirty;
+
 	unsigned long apicv_inhibit_reasons;
 };
 
@@ -1401,9 +1405,6 @@ struct kvm_arch {
 	struct kvm_pit *vpit;
 #endif
 	atomic_t vapics_in_nmi_mode;
-	struct mutex apic_map_lock;
-	struct kvm_apic_map __rcu *apic_map;
-	atomic_t apic_map_dirty;
 
 	bool apic_access_memslot_enabled;
 	bool apic_access_memslot_inhibited;
@@ -2381,7 +2382,7 @@ void kvm_make_scan_ioapic_request_mask(struct kvm *kvm,
 				       unsigned long *vcpu_bitmap);
 
 void kvm_arch_init_plane(struct kvm_plane *plane);
-static inline void kvm_arch_free_plane(struct kvm_plane *plane) {}
+void kvm_arch_free_plane(struct kvm_plane *plane);
 
 bool kvm_arch_async_page_not_present(struct kvm_vcpu *vcpu,
 				     struct kvm_async_pf *work);
