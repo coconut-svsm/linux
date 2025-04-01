@@ -3120,7 +3120,7 @@ static int interrupt_window_interception(struct kvm_vcpu *vcpu)
 	 * All vCPUs which run still run nested, will remain to have their
 	 * AVIC still inhibited due to per-cpu AVIC inhibition.
 	 */
-	kvm_clear_apicv_inhibit(vcpu->kvm, APICV_INHIBIT_REASON_IRQWIN);
+	kvm_clear_apicv_inhibit(vcpu->kvm->planes[vcpu->plane], APICV_INHIBIT_REASON_IRQWIN);
 
 	++vcpu->stat->irq_window_exits;
 	return 1;
@@ -3905,7 +3905,8 @@ static void svm_enable_irq_window(struct kvm_vcpu *vcpu)
 		 * the VM wide AVIC inhibition.
 		 */
 		if (!is_guest_mode(vcpu))
-			kvm_set_apicv_inhibit(vcpu->kvm, APICV_INHIBIT_REASON_IRQWIN);
+			kvm_set_apicv_inhibit(vcpu_to_plane(vcpu),
+					      APICV_INHIBIT_REASON_IRQWIN);
 
 		svm_set_vintr(svm);
 	}

@@ -343,6 +343,7 @@ enum {
 
 static void kvm_recalculate_apic_map(struct kvm *kvm)
 {
+	struct kvm_plane *plane = kvm->planes[0];
 	struct kvm_apic_map *new, *old = NULL;
 	struct kvm_vcpu *vcpu;
 	unsigned long i;
@@ -422,19 +423,19 @@ out:
 	 * map also applies to APICv.
 	 */
 	if (!new)
-		kvm_set_apicv_inhibit(kvm, APICV_INHIBIT_REASON_PHYSICAL_ID_ALIASED);
+		kvm_set_apicv_inhibit(plane, APICV_INHIBIT_REASON_PHYSICAL_ID_ALIASED);
 	else
-		kvm_clear_apicv_inhibit(kvm, APICV_INHIBIT_REASON_PHYSICAL_ID_ALIASED);
+		kvm_clear_apicv_inhibit(plane, APICV_INHIBIT_REASON_PHYSICAL_ID_ALIASED);
 
 	if (!new || new->logical_mode == KVM_APIC_MODE_MAP_DISABLED)
-		kvm_set_apicv_inhibit(kvm, APICV_INHIBIT_REASON_LOGICAL_ID_ALIASED);
+		kvm_set_apicv_inhibit(plane, APICV_INHIBIT_REASON_LOGICAL_ID_ALIASED);
 	else
-		kvm_clear_apicv_inhibit(kvm, APICV_INHIBIT_REASON_LOGICAL_ID_ALIASED);
+		kvm_clear_apicv_inhibit(plane, APICV_INHIBIT_REASON_LOGICAL_ID_ALIASED);
 
 	if (xapic_id_mismatch)
-		kvm_set_apicv_inhibit(kvm, APICV_INHIBIT_REASON_APIC_ID_MODIFIED);
+		kvm_set_apicv_inhibit(plane, APICV_INHIBIT_REASON_APIC_ID_MODIFIED);
 	else
-		kvm_clear_apicv_inhibit(kvm, APICV_INHIBIT_REASON_APIC_ID_MODIFIED);
+		kvm_clear_apicv_inhibit(plane, APICV_INHIBIT_REASON_APIC_ID_MODIFIED);
 
 	old = rcu_dereference_protected(kvm->arch.apic_map,
 			lockdep_is_held(&kvm->arch.apic_map_lock));
@@ -2600,7 +2601,7 @@ static void __kvm_apic_set_base(struct kvm_vcpu *vcpu, u64 value)
 
 	if ((value & MSR_IA32_APICBASE_ENABLE) &&
 	     apic->base_address != APIC_DEFAULT_PHYS_BASE) {
-		kvm_set_apicv_inhibit(apic->vcpu->kvm,
+		kvm_set_apicv_inhibit(vcpu_to_plane(vcpu),
 				      APICV_INHIBIT_REASON_APIC_BASE_MODIFIED);
 	}
 }

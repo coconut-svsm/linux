@@ -6449,7 +6449,7 @@ int kvm_vm_ioctl_enable_cap(struct kvm *kvm,
 		smp_wmb();
 		kvm->arch.irqchip_mode = KVM_IRQCHIP_SPLIT;
 		kvm->arch.nr_reserved_ioapic_pins = cap->args[0];
-		kvm_clear_apicv_inhibit(kvm, APICV_INHIBIT_REASON_ABSENT);
+		kvm_clear_apicv_inhibit(kvm->planes[0], APICV_INHIBIT_REASON_ABSENT);
 		r = 0;
 split_irqchip_unlock:
 		mutex_unlock(&kvm->lock);
@@ -6989,7 +6989,7 @@ set_identity_unlock:
 		/* Write kvm->irq_routing before enabling irqchip_in_kernel. */
 		smp_wmb();
 		kvm->arch.irqchip_mode = KVM_IRQCHIP_KERNEL;
-		kvm_clear_apicv_inhibit(kvm, APICV_INHIBIT_REASON_ABSENT);
+		kvm_clear_apicv_inhibit(kvm->planes[0], APICV_INHIBIT_REASON_ABSENT);
 	create_irqchip_unlock:
 		mutex_unlock(&kvm->lock);
 		break;
@@ -9885,14 +9885,18 @@ static void set_or_clear_apicv_inhibit(unsigned long *inhibits,
 	trace_kvm_apicv_inhibit_changed(reason, set, *inhibits);
 }
 
-static void kvm_apicv_init(struct kvm *kvm)
+static void kvm_apicv_init(struct kvm *kvm, unsigned long *apicv_inhibit_reasons)
 {
-	enum kvm_apicv_inhibit reason = enable_apicv ? APICV_INHIBIT_REASON_ABSENT :
-						       APICV_INHIBIT_REASON_DISABLED;
+	enum kvm_apicv_inhibit reason;
 
-	set_or_clear_apicv_inhibit(&kvm->arch.apicv_inhibit_reasons, reason, true);
+	if (!enable_apicv)
+		reason = APICV_INHIBIT_REASON_DISABLED;
+	else if (!irqchip_in_kernel(kvm))
+		reason = APICV_INHIBIT_REASON_ABSENT;
+	else
+		return;
 
-	init_rwsem(&kvm->arch.apicv_update_lock);
+	set_or_clear_apicv_inhibit(apicv_inhibit_reasons, reason, true);
 }
 
 static void kvm_sched_yield(struct kvm_vcpu *vcpu, unsigned long dest_id)
@@ -10525,10 +10529,22 @@ static void kvm_vcpu_update_apicv(struct kvm_vcpu *vcpu)
 	__kvm_vcpu_update_apicv(vcpu);
 }
 
-void __kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
+static bool kvm_compute_apicv_inhibit(struct kvm *kvm,
+				      enum kvm_apicv_inhibit reason)
+{
+	int i;
+	for (i = 0; i < KVM_MAX_VCPU_PLANES; i++)
+		if (test_bit(reason, &kvm->planes[i]->arch.apicv_inhibit_reasons))
+			return true;
+
+	return false;
+}
+
+void __kvm_set_or_clear_apicv_inhibit(struct kvm_plane *plane,
 				      enum kvm_apicv_inhibit reason, bool set)
 {
-	unsigned long old, new;
+	struct kvm *kvm = plane->kvm;
+	unsigned long local, global;
 	bool changed;
 
 	lockdep_assert_held_write(&kvm->arch.apicv_update_lock);
@@ -10536,9 +10552,24 @@ void __kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
 	if (!(kvm_x86_ops.required_apicv_inhibits & BIT(reason)))
 		return;
 
-	old = new = kvm->arch.apicv_inhibit_reasons;
-	set_or_clear_apicv_inhibit(&new, reason, set);
-	changed = (!!old != !!new);
+	local = plane->arch.apicv_inhibit_reasons;
+	set_or_clear_apicv_inhibit(&local, reason, set);
+
+	/* Could this flip change the global state? */
+	global = kvm->arch.apicv_inhibit_reasons;
+	if ((local & BIT(reason)) == (global & BIT(reason))) {
+		/* Easy case 1, the bit is now the same as for the whole VM.  */
+		changed = false;
+	} else if (set) {
+		/* Easy case 2, maybe the bit flipped globally from clear to set?  */
+		changed = !global;
+		set_or_clear_apicv_inhibit(&global, reason, set);
+	} else {
+		/* Harder case, check if no other plane had this inhibit.  */
+		set = kvm_compute_apicv_inhibit(kvm, reason);
+		set_or_clear_apicv_inhibit(&global, reason, set);
+		changed = !global;
+	}
 
 	if (changed) {
 		/*
@@ -10556,7 +10587,8 @@ void __kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
 		kvm_make_all_cpus_request(kvm, KVM_REQ_APICV_UPDATE);
 	}
 
-	kvm->arch.apicv_inhibit_reasons = new;
+	plane->arch.apicv_inhibit_reasons = local;
+	kvm->arch.apicv_inhibit_reasons = global;
 
 	if (changed && set) {
 		unsigned long gfn = gpa_to_gfn(APIC_DEFAULT_PHYS_BASE);
@@ -10567,14 +10599,17 @@ void __kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
 	}
 }
 
-void kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
+void kvm_set_or_clear_apicv_inhibit(struct kvm_plane *plane,
 				    enum kvm_apicv_inhibit reason, bool set)
 {
+	struct kvm *kvm;
+
 	if (!enable_apicv)
 		return;
 
+	kvm = plane->kvm;
 	down_write(&kvm->arch.apicv_update_lock);
-	__kvm_set_or_clear_apicv_inhibit(kvm, reason, set);
+	__kvm_set_or_clear_apicv_inhibit(plane, reason, set);
 	up_write(&kvm->arch.apicv_update_lock);
 }
 EXPORT_SYMBOL_GPL(kvm_set_or_clear_apicv_inhibit);
@@ -12030,24 +12065,26 @@ int kvm_arch_vcpu_ioctl_set_sregs(struct kvm_vcpu *vcpu,
 	return ret;
 }
 
-static void kvm_arch_vcpu_guestdbg_update_apicv_inhibit(struct kvm *kvm)
+static void kvm_arch_vcpu_guestdbg_update_apicv_inhibit(struct kvm_plane *plane)
 {
 	bool set = false;
+	struct kvm *kvm;
 	struct kvm_vcpu *vcpu;
 	unsigned long i;
 
 	if (!enable_apicv)
 		return;
 
+	kvm = plane->kvm;
 	down_write(&kvm->arch.apicv_update_lock);
 
-	kvm_for_each_vcpu(i, vcpu, kvm) {
+	kvm_for_each_plane_vcpu(i, vcpu, plane) {
 		if (vcpu->guest_debug & KVM_GUESTDBG_BLOCKIRQ) {
 			set = true;
 			break;
 		}
 	}
-	__kvm_set_or_clear_apicv_inhibit(kvm, APICV_INHIBIT_REASON_BLOCKIRQ, set);
+	__kvm_set_or_clear_apicv_inhibit(plane, APICV_INHIBIT_REASON_BLOCKIRQ, set);
 	up_write(&kvm->arch.apicv_update_lock);
 }
 
@@ -12103,7 +12140,7 @@ int kvm_arch_vcpu_ioctl_set_guest_debug(struct kvm_vcpu *vcpu,
 
 	kvm_x86_call(update_exception_bitmap)(vcpu);
 
-	kvm_arch_vcpu_guestdbg_update_apicv_inhibit(vcpu->kvm);
+	kvm_arch_vcpu_guestdbg_update_apicv_inhibit(vcpu_to_plane(vcpu));
 
 	r = 0;
 
@@ -12685,6 +12722,11 @@ void kvm_arch_free_vm(struct kvm *kvm)
 }
 
 
+void kvm_arch_init_plane(struct kvm_plane *plane)
+{
+	kvm_apicv_init(plane->kvm, &plane->arch.apicv_inhibit_reasons);
+}
+
 int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 {
 	int ret;
@@ -12737,7 +12779,7 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	INIT_DELAYED_WORK(&kvm->arch.kvmclock_update_work, kvmclock_update_fn);
 	INIT_DELAYED_WORK(&kvm->arch.kvmclock_sync_work, kvmclock_sync_fn);
 
-	kvm_apicv_init(kvm);
+	kvm_apicv_init(kvm, &kvm->arch.apicv_inhibit_reasons);
 	kvm_hv_init_vm(kvm);
 	kvm_xen_init_vm(kvm);
 

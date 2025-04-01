@@ -944,7 +944,7 @@ static inline struct kvm_plane *vcpu_to_plane(struct kvm_vcpu *vcpu)
 #else
 static inline struct kvm_plane *vcpu_to_plane(struct kvm_vcpu *vcpu)
 {
-	return vcpu->kvm->planes[vcpu->plane_id];
+	return vcpu->kvm->planes[vcpu->plane];
 }
 #endif
 

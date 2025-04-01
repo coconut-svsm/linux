@@ -1098,6 +1098,7 @@ struct kvm_arch_memory_slot {
 };
 
 struct kvm_arch_plane {
+	unsigned long apicv_inhibit_reasons;
 };
 
 /*
@@ -1310,11 +1311,13 @@ enum kvm_apicv_inhibit {
 	/*
 	 * PIT (i8254) 're-inject' mode, relies on EOI intercept,
 	 * which AVIC doesn't support for edge triggered interrupts.
+	 * Applied only to plane 0.
 	 */
 	APICV_INHIBIT_REASON_PIT_REINJ,
 
 	/*
-	 * AVIC is disabled because SEV doesn't support it.
+	 * AVIC is disabled because SEV doesn't support it.  Sticky and applied
+	 * only to plane 0.
 	 */
 	APICV_INHIBIT_REASON_SEV,
 
@@ -2249,21 +2252,21 @@ gpa_t kvm_mmu_gva_to_gpa_system(struct kvm_vcpu *vcpu, gva_t gva,
 bool kvm_apicv_activated(struct kvm *kvm);
 bool kvm_vcpu_apicv_activated(struct kvm_vcpu *vcpu);
 void __kvm_vcpu_update_apicv(struct kvm_vcpu *vcpu);
-void __kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
+void __kvm_set_or_clear_apicv_inhibit(struct kvm_plane *plane,
 				      enum kvm_apicv_inhibit reason, bool set);
-void kvm_set_or_clear_apicv_inhibit(struct kvm *kvm,
+void kvm_set_or_clear_apicv_inhibit(struct kvm_plane *plane,
 				    enum kvm_apicv_inhibit reason, bool set);
 
-static inline void kvm_set_apicv_inhibit(struct kvm *kvm,
+static inline void kvm_set_apicv_inhibit(struct kvm_plane *plane,
 					 enum kvm_apicv_inhibit reason)
 {
-	kvm_set_or_clear_apicv_inhibit(kvm, reason, true);
+	kvm_set_or_clear_apicv_inhibit(plane, reason, true);
 }
 
-static inline void kvm_clear_apicv_inhibit(struct kvm *kvm,
+static inline void kvm_clear_apicv_inhibit(struct kvm_plane *plane,
 					   enum kvm_apicv_inhibit reason)
 {
-	kvm_set_or_clear_apicv_inhibit(kvm, reason, false);
+	kvm_set_or_clear_apicv_inhibit(plane, reason, false);
 }
 
 int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 error_code,
@@ -2377,7 +2380,7 @@ void kvm_make_scan_ioapic_request(struct kvm *kvm);
 void kvm_make_scan_ioapic_request_mask(struct kvm *kvm,
 				       unsigned long *vcpu_bitmap);
 
-static inline void kvm_arch_init_plane(struct kvm_plane *plane) {}
+void kvm_arch_init_plane(struct kvm_plane *plane);
 static inline void kvm_arch_free_plane(struct kvm_plane *plane) {}
 
 bool kvm_arch_async_page_not_present(struct kvm_vcpu *vcpu,
