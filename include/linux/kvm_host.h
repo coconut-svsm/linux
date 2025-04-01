@@ -764,6 +764,8 @@ struct kvm_memslots {
 struct kvm_plane {
 	struct kvm *kvm;
 	int plane;
+
+	struct kvm_arch_plane arch;
 };
 
 struct kvm {

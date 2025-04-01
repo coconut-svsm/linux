@@ -147,6 +147,9 @@ struct kvm_vcpu_stat {
 struct kvm_arch_memory_slot {
 };
 
+struct kvm_arch_plane {
+};
+
 #ifdef CONFIG_CPU_LOONGSON64
 struct ipi_state {
 	uint32_t status;
@@ -886,6 +889,8 @@ extern unsigned long kvm_mips_get_ramsize(struct kvm *kvm);
 extern int kvm_vcpu_ioctl_interrupt(struct kvm_vcpu *vcpu,
 			     struct kvm_mips_interrupt *irq);
 
+static inline void kvm_arch_init_plane(struct kvm_plane *plane) {}
+static inline void kvm_arch_free_plane(struct kvm_plane *plane) {}
 static inline void kvm_arch_free_memslot(struct kvm *kvm,
 					 struct kvm_memory_slot *slot) {}
 static inline void kvm_arch_memslots_updated(struct kvm *kvm, u64 gen) {}

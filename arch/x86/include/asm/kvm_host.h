@@ -1097,6 +1097,9 @@ struct kvm_arch_memory_slot {
 	unsigned short *gfn_write_track;
 };
 
+struct kvm_arch_plane {
+};
+
 /*
  * Track the mode of the optimized logical map, as the rules for decoding the
  * destination vary per mode.  Enabling the optimized logical map requires all
@@ -2373,6 +2376,9 @@ bool kvm_is_linear_rip(struct kvm_vcpu *vcpu, unsigned long linear_rip);
 void kvm_make_scan_ioapic_request(struct kvm *kvm);
 void kvm_make_scan_ioapic_request_mask(struct kvm *kvm,
 				       unsigned long *vcpu_bitmap);
+
+static inline void kvm_arch_init_plane(struct kvm_plane *plane) {}
+static inline void kvm_arch_free_plane(struct kvm_plane *plane) {}
 
 bool kvm_arch_async_page_not_present(struct kvm_vcpu *vcpu,
 				     struct kvm_async_pf *work);

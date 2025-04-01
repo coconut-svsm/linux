@@ -1112,6 +1112,8 @@ static struct kvm_plane *kvm_create_vm_plane(struct kvm *kvm, unsigned plane_id)
 
 	plane->kvm = kvm;
 	plane->plane = plane_id;
+
+	kvm_arch_init_plane(plane);
 	return plane;
 }
 
@@ -1285,6 +1287,7 @@ static void kvm_destroy_devices(struct kvm *kvm)
 
 static void kvm_destroy_plane(struct kvm_plane *plane)
 {
+	kvm_arch_free_plane(plane);
 }
 
 static void kvm_destroy_vm(struct kvm *kvm)

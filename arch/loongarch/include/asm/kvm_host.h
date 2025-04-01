@@ -73,6 +73,9 @@ struct kvm_arch_memory_slot {
 	unsigned long flags;
 };
 
+struct kvm_arch_plane {
+};
+
 #define HOST_MAX_PMNUM			16
 struct kvm_context {
 	unsigned long vpid_cache;
@@ -325,6 +328,8 @@ static inline bool kvm_is_ifetch_fault(struct kvm_vcpu_arch *arch)
 }
 
 /* Misc */
+static inline void kvm_arch_init_plane(struct kvm_plane *plane) {}
+static inline void kvm_arch_free_plane(struct kvm_plane *plane) {}
 static inline void kvm_arch_hardware_unsetup(void) {}
 static inline void kvm_arch_memslots_updated(struct kvm *kvm, u64 gen) {}
 static inline void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu) {}
