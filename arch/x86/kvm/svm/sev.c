@@ -3512,13 +3512,19 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 		if (!kvm_ghcb_sw_scratch_is_valid(svm))
 			goto vmgexit_err;
 		break;
-	case SVM_VMGEXIT_AP_CREATION:
+	case SVM_VMGEXIT_AP_CREATION: {
+		unsigned int request;
+
 		if (!is_sev_snp_guest(vcpu))
 			goto vmgexit_err;
-		if (lower_32_bits(control->exit_info_1) != SVM_VMGEXIT_AP_DESTROY)
+
+		request = lower_32_bits(control->exit_info_1);
+		request &= ~SVM_VMGEXIT_AP_VMPL_MASK;
+		if (request != SVM_VMGEXIT_AP_DESTROY)
 			if (!kvm_ghcb_rax_is_valid(svm))
 				goto vmgexit_err;
 		break;
+	}
 	case SVM_VMGEXIT_GET_APIC_IDS:
 		if (!kvm_ghcb_rax_is_valid(svm))
 			goto vmgexit_err;
@@ -4151,8 +4157,26 @@ static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 	/* Use the new VMSA */
 	svm->vmcb->control.vmsa_pa = pfn_to_hpa(pfn);
 
+	/*
+	 * The vCPU may not have gone through the LAUNCH_UPDATE process, so mark
+	 * the guest state as protected.
+	 */
+	vcpu->arch.guest_state_protected = true;
+
+	/*
+	 * SEV-ES guest mandates LBR Virtualization to be _always_ ON. Enable it
+	 * only after setting guest_state_protected because KVM_SET_MSRS allows
+	 * dynamic toggling of LBRV (for performance reason) on write access to
+	 * MSR_IA32_DEBUGCTLMSR when guest_state_protected is not set.
+	 */
+	svm_enable_lbrv(vcpu);
+
 	/* Mark the vCPU as runnable */
-	kvm_set_mp_state(vcpu, KVM_MP_STATE_RUNNABLE);
+	if (svm->sev_es.snp_ap_runnable) {
+		kvm_set_mp_state(vcpu, KVM_MP_STATE_RUNNABLE);
+	} else {
+		kvm_set_mp_state(vcpu, KVM_MP_STATE_UNINITIALIZED);
+	}
 
 	/*
 	 * gmem pages aren't currently migratable, but if this ever changes
@@ -4162,36 +4186,87 @@ static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 	kvm_release_page_clean(page);
 }
 
-static int sev_snp_ap_creation(struct vcpu_svm *svm)
+static unsigned int get_ap_creation_request(struct vcpu_svm *svm)
 {
-	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(svm->vcpu.plane);
-	struct kvm_vcpu *vcpu = &svm->vcpu;
-	struct kvm_vcpu *target_vcpu;
-	struct vcpu_svm *target_svm;
-	unsigned int request;
+//	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(svm->vcpu.plane);
+//	struct kvm_vcpu *vcpu = &svm->vcpu;
+	unsigned int req = lower_32_bits(svm->vmcb->control.exit_info_1);
+
+	return req & ~SVM_VMGEXIT_AP_VMPL_MASK;
+}
+
+static unsigned int get_ap_creation_vmpl(struct vcpu_svm *svm)
+{
+	unsigned int req = lower_32_bits(svm->vmcb->control.exit_info_1);
+
+	return (req & SVM_VMGEXIT_AP_VMPL_MASK) >> SVM_VMGEXIT_AP_VMPL_SHIFT;
+}
+
+static unsigned int get_ap_creation_apic_id(struct vcpu_svm *svm)
+{
+	return upper_32_bits(svm->vmcb->control.exit_info_1);
+}
+
+#define SVM_SEV_VMPL_MAX	4
+
+static int sev_snp_ap_creation(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *target_svm = NULL, *svm = to_svm(vcpu);
+	struct kvm_sev_info_plane *target_sev_plane = NULL;
+	struct kvm_plane *target_plane = NULL;
+	struct kvm_vcpu *target_vcpu = NULL;
 	unsigned int apic_id;
+	unsigned int request;
+	unsigned int vmpl;
 
-	request = lower_32_bits(svm->vmcb->control.exit_info_1);
-	apic_id = upper_32_bits(svm->vmcb->control.exit_info_1);
+	request = get_ap_creation_request(svm);
+	apic_id = get_ap_creation_apic_id(svm);
+	vmpl = get_ap_creation_vmpl(svm);
 
-	/* Validate the APIC ID */
-	target_vcpu = kvm_get_vcpu_by_id(vcpu->kvm, apic_id);
-	if (!target_vcpu) {
-		vcpu_unimpl(vcpu, "vmgexit: invalid AP APIC ID [%#x] from guest\n",
-			    apic_id);
+	/* Validate the requested VMPL level */
+	if (vmpl >= SVM_SEV_VMPL_MAX) {
+		vcpu_unimpl(vcpu, "vmgexit: invalid VMPL level [%u] from guest\n",
+			    vmpl);
 		return -EINVAL;
+	}
+	vmpl = array_index_nospec(vmpl, SVM_SEV_VMPL_MAX);
+
+	/* Obtain the target plane and vCPU */
+	target_plane = vcpu->kvm->planes[vmpl];
+	if (target_plane) {
+		target_vcpu = plane_get_vcpu(target_plane, apic_id);
+	} else {
+		target_vcpu = NULL;
+	}
+
+	/* Request user-space to create target plane VCPU if it does not exist */
+	if (!target_plane || !target_vcpu) {
+		vcpu->arch.complete_userspace_io = sev_snp_ap_creation;
+		return kvm_request_create_plane(vcpu, vmpl, apic_id);
 	}
 
 	target_svm = to_svm(target_vcpu);
+	target_sev_plane = &to_kvm_svm_plane(target_svm->vcpu.plane)->sev_info_plane;
 
 	guard(mutex)(&target_svm->sev_es.snp_vmsa_mutex);
+
+	/* VMPL0 can only be replaced by another vCPU running VMPL0 */
+	if (vmpl == SVM_SEV_VMPL0 &&
+	    (vcpu == target_vcpu || vcpu->plane_level != SVM_SEV_VMPL0)) {
+		vcpu_unimpl(vcpu, "vmgexit: VMPL0 AP action not allowed\n");
+		return -EINVAL;
+	}
 
 	switch (request) {
 	case SVM_VMGEXIT_AP_CREATE_ON_INIT:
 	case SVM_VMGEXIT_AP_CREATE:
-		if (vcpu->arch.regs[VCPU_REGS_RAX] != sev_plane->vmsa_features) {
+		/* Initialize target planes SEV features if necessary */
+		if (target_sev_plane->vmsa_features == 0)
+			target_sev_plane->vmsa_features = vcpu->arch.regs[VCPU_REGS_RAX];
+
+		if (vcpu->arch.regs[VCPU_REGS_RAX] != target_sev_plane->vmsa_features) {
 			vcpu_unimpl(vcpu, "vmgexit: mismatched AP sev_features [%#lx] != [%#llx] from guest\n",
-				    vcpu->arch.regs[VCPU_REGS_RAX], sev_plane->vmsa_features);
+				    vcpu->arch.regs[VCPU_REGS_RAX], target_sev_plane->vmsa_features);
 			return -EINVAL;
 		}
 
@@ -4226,16 +4301,18 @@ static int sev_snp_ap_creation(struct vcpu_svm *svm)
 		return -EINVAL;
 	}
 
+	/* Signal the vCPU to update its state */
+	kvm_make_request(KVM_REQ_UPDATE_PROTECTED_GUEST_STATE, target_vcpu);
+
 	target_svm->sev_es.snp_ap_waiting_for_reset = true;
+	target_svm->sev_es.snp_ap_runnable = (request == SVM_VMGEXIT_AP_CREATE);
 
-	/*
-	 * Unless Creation is deferred until INIT, signal the vCPU to update
-	 * its state.
-	 */
-	if (request != SVM_VMGEXIT_AP_CREATE_ON_INIT)
-		kvm_make_request_and_kick(KVM_REQ_UPDATE_PROTECTED_GUEST_STATE, target_vcpu);
+	if (request == SVM_VMGEXIT_AP_CREATE)
+		kvm_make_request(KVM_REQ_PLANE_RESCHED, target_vcpu);
 
-	return 0;
+	kvm_vcpu_kick(target_vcpu);
+
+	return 1;
 }
 
 static int snp_handle_guest_req(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
@@ -4779,12 +4856,11 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		ret = snp_begin_psc(svm);
 		break;
 	case SVM_VMGEXIT_AP_CREATION:
-		ret = sev_snp_ap_creation(svm);
-		if (ret) {
+		ret = sev_snp_ap_creation(vcpu);
+		if (ret < 0) {
 			svm_vmgexit_bad_input(svm, GHCB_ERR_INVALID_INPUT);
+			ret = 1;
 		}
-
-		ret = 1;
 		break;
 	case SVM_VMGEXIT_GUEST_REQUEST:
 		ret = snp_handle_guest_req(svm, control->exit_info_1, control->exit_info_2);

@@ -345,6 +345,15 @@ static_assert((X2AVIC_4K_MAX_PHYSICAL_ID & AVIC_PHYSICAL_MAX_INDEX_MASK) == X2AV
 
 #define VMCB_ALLOWED_SEV_FEATURES_VALID			BIT_ULL(63)
 
+enum {
+	SVM_SEV_VMPL0 = 0,
+	SVM_SEV_VMPL1,
+	SVM_SEV_VMPL2,
+	SVM_SEV_VMPL3,
+
+	SVM_SEV_VMPL_MAX
+};
+
 struct vmcb_seg {
 	u16 selector;
 	u16 attrib;

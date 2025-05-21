@@ -12165,6 +12165,15 @@ static int __kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		kvm_vcpu_block(vcpu);
 		kvm_vcpu_srcu_read_lock(vcpu);
 
+		/*
+		 * It is possible that the vCPU has never run before. If the
+		 * request is to update the protected guest state (AP Create),
+		 * then ensure that the vCPU can now run.
+		 */
+		if (kvm_test_request(KVM_REQ_UPDATE_PROTECTED_GUEST_STATE, vcpu) &&
+		    vcpu->arch.mp_state == KVM_MP_STATE_UNINITIALIZED)
+			vcpu->arch.mp_state = KVM_MP_STATE_RUNNABLE;
+
 		if (kvm_apic_accept_events(vcpu) < 0) {
 			r = 0;
 			goto out;
