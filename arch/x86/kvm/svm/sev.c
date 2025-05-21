@@ -3400,13 +3400,19 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 		if (!kvm_ghcb_sw_scratch_is_valid(svm))
 			goto vmgexit_err;
 		break;
-	case SVM_VMGEXIT_AP_CREATION:
+	case SVM_VMGEXIT_AP_CREATION: {
+		unsigned int request;
+
 		if (!sev_snp_guest(vcpu->kvm))
 			goto vmgexit_err;
-		if (lower_32_bits(control->exit_info_1) != SVM_VMGEXIT_AP_DESTROY)
+
+		request = lower_32_bits(control->exit_info_1);
+		request &= ~SVM_VMGEXIT_AP_VMPL_MASK;
+		if (request != SVM_VMGEXIT_AP_DESTROY)
 			if (!kvm_ghcb_rax_is_valid(svm))
 				goto vmgexit_err;
 		break;
+	}
 	case SVM_VMGEXIT_GET_APIC_IDS:
 		if (!kvm_ghcb_rax_is_valid(svm))
 			goto vmgexit_err;
@@ -3979,7 +3985,11 @@ void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 	svm_enable_lbrv(vcpu);
 
 	/* Mark the vCPU as runnable */
-	kvm_set_mp_state(vcpu, KVM_MP_STATE_RUNNABLE);
+	if (svm->sev_es.snp_ap_runnable) {
+		kvm_set_mp_state(vcpu, KVM_MP_STATE_RUNNABLE);
+	} else {
+		kvm_set_mp_state(vcpu, KVM_MP_STATE_UNINITIALIZED);
+	}
 
 	/*
 	 * gmem pages aren't currently migratable, but if this ever changes
@@ -3989,19 +3999,48 @@ void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 	kvm_release_page_clean(page);
 }
 
-static int sev_snp_ap_creation(struct vcpu_svm *svm)
+static unsigned int get_ap_creation_request(struct vcpu_svm *svm)
 {
-	struct kvm_vcpu *vcpu = &svm->vcpu;
+	unsigned int req = lower_32_bits(svm->vmcb->control.exit_info_1);
+
+	return req & ~SVM_VMGEXIT_AP_VMPL_MASK;
+}
+
+static unsigned int get_ap_creation_vmpl(struct vcpu_svm *svm)
+{
+	unsigned int req = lower_32_bits(svm->vmcb->control.exit_info_1);
+
+	return (req & SVM_VMGEXIT_AP_VMPL_MASK) >> SVM_VMGEXIT_AP_VMPL_SHIFT;
+}
+
+static unsigned int get_ap_creation_apic_id(struct vcpu_svm *svm)
+{
+	return upper_32_bits(svm->vmcb->control.exit_info_1);
+}
+
+static int sev_snp_continue_ap_creation(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct kvm_plane *target_plane;
 	struct kvm_vcpu *target_vcpu;
 	struct vcpu_svm *target_svm;
 	unsigned int request;
 	unsigned int apic_id;
+	unsigned int vmpl;
 
-	request = lower_32_bits(svm->vmcb->control.exit_info_1);
-	apic_id = upper_32_bits(svm->vmcb->control.exit_info_1);
+	request = get_ap_creation_request(svm);
+	apic_id = get_ap_creation_apic_id(svm);
+	vmpl = get_ap_creation_vmpl(svm);
 
-	/* Validate the APIC ID */
-	target_vcpu = kvm_get_vcpu_by_id(vcpu->kvm, apic_id);
+	/* Obtain the target plane and vCPU */
+	target_plane = vcpu->kvm->planes[vmpl];
+	if (!target_plane) {
+		vcpu_unimpl(vcpu, "vmgexit: invalid VMPL level [%u] from guest\n",
+			    vmpl);
+		return -EINVAL;
+	}
+
+	target_vcpu = kvm_get_plane_vcpu_by_id(target_plane, apic_id);
 	if (!target_vcpu) {
 		vcpu_unimpl(vcpu, "vmgexit: invalid AP APIC ID [%#x] from guest\n",
 			    apic_id);
@@ -4011,6 +4050,13 @@ static int sev_snp_ap_creation(struct vcpu_svm *svm)
 	target_svm = to_svm(target_vcpu);
 
 	guard(mutex)(&target_svm->sev_es.snp_vmsa_mutex);
+
+	/* VMPL0 can only be replaced by another vCPU running VMPL0 */
+	if (vmpl == SVM_SEV_VMPL0 &&
+	    (vcpu == target_vcpu || vcpu->plane != SVM_SEV_VMPL0)) {
+		vcpu_unimpl(vcpu, "vmgexit: VMPL0 AP action not allowed\n");
+		return -EINVAL;
+	}
 
 	switch (request) {
 	case SVM_VMGEXIT_AP_CREATE_ON_INIT:
@@ -4052,16 +4098,59 @@ static int sev_snp_ap_creation(struct vcpu_svm *svm)
 		return -EINVAL;
 	}
 
+	/* Signal the vCPU to update its state */
+	kvm_make_request(KVM_REQ_UPDATE_PROTECTED_GUEST_STATE, target_vcpu);
+
 	target_svm->sev_es.snp_ap_waiting_for_reset = true;
+	target_svm->sev_es.snp_ap_runnable = (request == SVM_VMGEXIT_AP_CREATE);
 
-	/*
-	 * Unless Creation is deferred until INIT, signal the vCPU to update
-	 * its state.
-	 */
-	if (request != SVM_VMGEXIT_AP_CREATE_ON_INIT)
-		kvm_make_request_and_kick(KVM_REQ_UPDATE_PROTECTED_GUEST_STATE, target_vcpu);
+	kvm_vcpu_kick(target_vcpu);
 
-	return 0;
+	return 1;
+}
+
+static int sev_snp_ap_creation(struct vcpu_svm *svm)
+{
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct kvm_plane *target_plane;
+	struct kvm_vcpu *target_vcpu;
+	unsigned int apic_id;
+	unsigned int vmpl;
+
+	/* Validate the requested VMPL level */
+	vmpl = get_ap_creation_vmpl(svm);
+	if (vmpl >= SVM_SEV_VMPL_MAX) {
+		vcpu_unimpl(vcpu, "vmgexit: invalid VMPL level [%u] from guest\n",
+			    vmpl);
+		return -EINVAL;
+	}
+	vmpl = array_index_nospec(vmpl, SVM_SEV_VMPL_MAX);
+
+	/* Obtain the target plane and vCPU */
+	apic_id = get_ap_creation_apic_id(svm);
+	target_plane = vcpu->kvm->planes[vmpl];
+	if (target_plane) {
+		target_vcpu = kvm_get_plane_vcpu_by_id(target_plane, apic_id);
+	} else {
+		target_vcpu = NULL;
+	}
+
+	if (!target_plane || !target_vcpu) {
+		struct kvm_plane_event_exit *plane_event = &vcpu->run->plane_event;
+
+		vcpu->run->exit_reason = KVM_EXIT_PLANE_EVENT;
+
+		memset(plane_event, 0, sizeof(*plane_event));
+		plane_event->cause = KVM_PLANE_EVENT_CREATE_CPU;
+		plane_event->target = BIT(vmpl);
+		plane_event->extra[0] = apic_id;
+
+		vcpu->arch.complete_userspace_io = sev_snp_continue_ap_creation;
+
+		return 0;
+	}
+
+	return sev_snp_continue_ap_creation(vcpu);
 }
 
 static int snp_handle_guest_req(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
@@ -4573,11 +4662,10 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		break;
 	case SVM_VMGEXIT_AP_CREATION:
 		ret = sev_snp_ap_creation(svm);
-		if (ret) {
+		if (ret < 0) {
 			svm_vmgexit_bad_input(svm, GHCB_ERR_INVALID_INPUT);
+			ret = 1;
 		}
-
-		ret = 1;
 		break;
 	case SVM_VMGEXIT_GUEST_REQUEST:
 		ret = snp_handle_guest_req(svm, control->exit_info_1, control->exit_info_2);

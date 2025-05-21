@@ -7355,6 +7355,8 @@ Userspace need not do anything if it does not wish to support a TDVMCALL.
     /* KVM_EXIT_PLANE_EVENT */
     struct {
   #define KVM_PLANE_EVENT_INTERRUPT	1
+  #define KVM_PLANE_EVENT_CREATE_CPU    2
+  #define KVM_PLANE_EVENT_RUN_SNP_VMPL  3
       __u16 cause;
       __u16 pending_event_planes;
       __u16 target;
@@ -7369,15 +7371,35 @@ currently executing one.
 On a ``KVM_EXIT_PLANE_EVENT`` exit, ``pending_event_planes`` is always
 set to the set of planes that have a pending interrupt.
 
-``cause`` provides the event that caused the exit, and the meaning of
-``target`` depends on the cause of the exit too.
+``cause`` provides the event that caused the exit.
 
-Right now the only defined cause is ``KVM_PLANE_EVENT_INTERRUPT``, i.e.
-an interrupt was received by a plane whose id is set in the
-``req_exit_planes`` bitmap.  In this case, ``target`` is the AND of
-``req_exit_planes`` and ``pending_event_planes``.
+Cause:
+  - ``KVM_PLANE_EVENT_INTERRUPT``
 
-``flags`` and ``extra`` are currently always 0.
+    an interrupt was received by a plane whose id is set in the
+    ``req_exit_planes`` bitmap.
+
+      - ``target`` is the AND of ``req_exit_planes`` and ``pending_event_planes``
+      - ``flags`` is 0
+      - ``extra`` is 0
+
+
+  - ``KVM_PLANE_EVENT_CREATE_CPU``
+
+    a request was received to create a vCPU on a specific plane.
+
+      - ``target`` is a bitmap of the planes on which to create the vCPU
+      - ``flags`` is 0
+      - ``extra`` is the APIC ID of the vCPU to be created
+
+  - ``KVM_PLANE_EVENT_RUN_SNP_VMPL``
+
+    a request was received to run a vCPU on a specific plane.
+
+      - ``target`` is a bitmap of the plane on which to create the vCPU
+      - ``flags`` is 0
+      - ``extra`` is the APIC ID of the vCPU to be run
+
 
 If userspace wants to switch to the target plane, it should move any
 shared state from the current plane to ``target``, and then invoke
