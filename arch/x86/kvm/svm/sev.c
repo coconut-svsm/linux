@@ -98,6 +98,7 @@ static unsigned long sev_me_mask;
 static unsigned int nr_asids;
 static unsigned long *sev_asid_bitmap;
 static unsigned long *sev_reclaim_asid_bitmap;
+static unsigned int vmpl_levels;
 
 static int snp_decommission_context(struct kvm *kvm);
 
@@ -3014,6 +3015,9 @@ void __init sev_hardware_setup(void)
 	/* Set encryption bit location for SEV-ES guests */
 	sev_enc_bit = ebx & 0x3f;
 
+	/* Get the number of supported VMPL levels */
+	vmpl_levels = (ebx >> 12) & 0xf;
+
 	/* Maximum number of encrypted guests supported simultaneously */
 	max_sev_asid = ecx;
 	if (!max_sev_asid)
@@ -3098,9 +3102,10 @@ out:
 			str_enabled_disabled(sev_es_supported),
 			min_sev_asid > 1 ? 1 : 0, min_sev_asid - 1);
 	if (boot_cpu_has(X86_FEATURE_SEV_SNP))
-		pr_info("SEV-SNP %s (ASIDs %u - %u)\n",
+		pr_info("SEV-SNP %s (ASIDs %u - %u), VMPL Levels %u\n",
 			str_enabled_disabled(sev_snp_supported),
-			min_sev_asid > 1 ? 1 : 0, min_sev_asid - 1);
+			min_sev_asid > 1 ? 1 : 0, min_sev_asid - 1,
+			vmpl_levels);
 
 	sev_enabled = sev_supported;
 	sev_es_enabled = sev_es_supported;
@@ -5652,4 +5657,17 @@ bool sev_snp_blocked(enum inject_type type, struct kvm_vcpu *vcpu)
 	unmap_hvdb(vcpu, &hvdb_map);
 
 	return blocked;
+}
+
+int sev_nr_vcpu_planes(struct kvm *kvm)
+{
+	/* An SVM or SEV guest can use software planes support */
+	if (!sev_es_guest(kvm))
+		return KVM_MAX_VCPU_PLANES;
+
+	/*
+	 * With SEV-ES and SEV-SNP, the register state is encrypted and only
+	 * SEV-SNP supports planes through hardware.
+	 */
+	return sev_snp_guest(kvm) ? vmpl_levels : 1;
 }

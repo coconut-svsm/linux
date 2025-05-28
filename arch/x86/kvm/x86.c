@@ -13890,8 +13890,8 @@ EXPORT_SYMBOL_GPL(kvm_handle_invpcid);
 
 int kvm_arch_nr_vcpu_planes(struct kvm *kvm)
 {
-	/* TODO: use kvm_x86_ops so that SNP can use planes for VTPLs.  */
-	return kvm->arch.has_protected_state ? 1 : KVM_MAX_VCPU_PLANES;
+	return kvm_x86_ops.nr_vcpu_planes ? kvm_x86_call(nr_vcpu_planes)(kvm)
+					  : KVM_MAX_VCPU_PLANES;
 }
 
 bool kvm_arch_planes_share_fpu(struct kvm *kvm)
