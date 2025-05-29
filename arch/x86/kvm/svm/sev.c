@@ -3498,6 +3498,7 @@ static bool sev_es_are_required_ghcb_fields_valid(struct vcpu_svm *svm)
 		return kvm_ghcb_rax_is_valid(svm);
 	case SVM_VMGEXIT_HVDB_PAGE:
 	case SVM_VMGEXIT_HV_IPI:
+	case SVM_VMGEXIT_SNP_RUN_VMPL:
 		return true;
 	default:
 		return true;
@@ -4519,6 +4520,46 @@ static void sev_get_apic_ids(struct vcpu_svm *svm)
 	kvfree(desc);
 }
 
+static int __sev_snp_run_vmpl(struct vcpu_svm *svm, unsigned int vmpl)
+{
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct kvm_vcpu *target = vcpu->common->vcpus[vmpl];
+	struct vcpu_svm *target_svm;
+
+	if (!target)
+		return -EINVAL;
+	target_svm = to_svm(target);
+
+	/* Mark current plane as stopped so it is not selected */
+	kvm_set_mp_state(target, KVM_MP_STATE_RUNNABLE);
+	/* In case KVM_REQ_UPDATE_PROTECTED_GUEST_STATE is set - mark the new VMSA as runnable */
+	target_svm->sev_es.snp_ap_runnable = true;
+	kvm_vcpu_set_plane_runnable(target);
+	kvm_vcpu_set_plane_stopped(vcpu);
+
+	kvm_make_request(KVM_REQ_PLANE_RESCHED, vcpu);
+
+	return 1;
+}
+
+static int sev_snp_run_vmpl(struct vcpu_svm *svm)
+{
+	struct ghcb *ghcb = svm->sev_es.ghcb;
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	unsigned int vmpl;
+
+	vmpl = lower_32_bits(svm->vmcb->control.exit_info_1);
+	if (vmpl >= SVM_SEV_VMPL_MAX) {
+		vcpu_unimpl(vcpu, "vmgexit: invalid VMPL level [%u] from guest\n", vmpl);
+		return -EINVAL;
+	}
+
+	ghcb_set_sw_exit_info_1(ghcb, 0);
+	ghcb_set_sw_exit_info_2(ghcb, 0);
+
+	return __sev_snp_run_vmpl(svm, vmpl);
+}
+
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -4630,6 +4671,27 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 
 		ret = snp_begin_psc_msr(svm, control->ghcb_gpa);
 		break;
+	case GHCB_MSR_VMPL_REQ: {
+		unsigned int vmpl;
+
+		if (!sev_snp_guest(vcpu->kvm))
+			goto out_terminate;
+
+		vmpl = get_ghcb_msr_bits(svm, GHCB_MSR_VMPL_LEVEL_MASK, GHCB_MSR_VMPL_LEVEL_POS);
+
+		set_ghcb_msr_bits(svm, 0, GHCB_MSR_VMPL_ERROR_MASK, GHCB_MSR_VMPL_ERROR_POS);
+		set_ghcb_msr_bits(svm, 0, GHCB_MSR_VMPL_RSVD_MASK, GHCB_MSR_VMPL_RSVD_POS);
+		set_ghcb_msr_bits(svm, GHCB_MSR_VMPL_RESP, GHCB_MSR_INFO_MASK, GHCB_MSR_INFO_POS);
+
+		if (vmpl >= SVM_SEV_VMPL_MAX) {
+			vcpu_unimpl(vcpu, "vmgexit: invalid VMPL level [%u] from guest\n", vmpl);
+			set_ghcb_msr_bits(svm, 1, GHCB_MSR_VMPL_ERROR_MASK, GHCB_MSR_VMPL_ERROR_POS);
+			break;
+		}
+
+		ret = __sev_snp_run_vmpl(svm, vmpl);
+		break;
+	}
 	case GHCB_MSR_TERM_REQ: {
 		u64 reason_set, reason_code;
 
@@ -4672,6 +4734,7 @@ static bool is_snp_only_vmgexit(u64 exit_code)
 	case SVM_VMGEXIT_PSC:
 	case SVM_VMGEXIT_HVDB_PAGE:
 	case SVM_VMGEXIT_HV_IPI:
+	case SVM_VMGEXIT_SNP_RUN_VMPL:
 		return true;
 	default:
 		return false;
@@ -4875,6 +4938,15 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 	case SVM_VMGEXIT_GET_APIC_IDS:
 		sev_get_apic_ids(svm);
 		return 1;
+	case SVM_VMGEXIT_SNP_RUN_VMPL: {
+		int r = sev_snp_run_vmpl(svm);
+
+		if (r < 0) {
+			svm_vmgexit_bad_input(svm, GHCB_ERR_INVALID_INPUT);
+			return 1;
+		}
+		return r;
+	}
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		/*
 		 * Note, the _guest_ is reporting an unsupported #VC, i.e. this
