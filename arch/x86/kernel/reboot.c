@@ -26,6 +26,7 @@
 #include <asm/cpu.h>
 #include <asm/nmi.h>
 #include <asm/smp.h>
+#include <asm/sev.h>
 
 #include <linux/ctype.h>
 #include <linux/mc146818rtc.h>
@@ -622,6 +623,13 @@ void __attribute__((weak)) mach_reboot_fixups(void)
  * can be triggered via the reboot= kernel boot option or
  * via quirks.
  *
+ * There is also the possibility that we are in a VM as an SVSM
+ * guest OS. We detect that at boot and set the reboot_type to
+ * BOOT_SVSM in that case. If SVSM Reboot fails, use the others as
+ * fallbacks, but ultimately, a Confidential Compute VM without
+ * SVSM probably can't be rebooted. It'll have to be shutdown via
+ * QEMU.
+ *
  * This means that this function can never return, it can misbehave
  * by not rebooting properly and hanging.
  */
@@ -710,6 +718,10 @@ static void native_machine_emergency_restart(void)
 
 			/* We're probably dead after this, but... */
 			reboot_type = BOOT_KBD;
+			break;
+		case BOOT_SVSM:
+			svsm_reboot();
+			reboot_type = BOOT_ACPI;
 			break;
 		}
 	}

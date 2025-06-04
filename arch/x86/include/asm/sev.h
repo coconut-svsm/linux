@@ -307,6 +307,7 @@ struct svsm_call {
 #define SVSM_CORE_PVALIDATE		1
 #define SVSM_CORE_CREATE_VCPU		2
 #define SVSM_CORE_DELETE_VCPU		3
+#define SVSM_CORE_REBOOT		8
 
 #define SVSM_ATTEST_CALL(x)		((1ULL << 32) | (x))
 #define SVSM_ATTEST_SERVICES		0
@@ -399,6 +400,7 @@ u64 snp_get_unsupported_features(u64 status);
 u64 sev_get_status(void);
 void sev_show_status(void);
 void snp_update_svsm_ca(void);
+void svsm_reboot(void);
 
 #else	/* !CONFIG_AMD_MEM_ENCRYPT */
 
@@ -435,6 +437,7 @@ static inline u64 snp_get_unsupported_features(u64 status) { return 0; }
 static inline u64 sev_get_status(void) { return 0; }
 static inline void sev_show_status(void) { }
 static inline void snp_update_svsm_ca(void) { }
+static inline void svsm_reboot(void) { }
 
 #endif	/* CONFIG_AMD_MEM_ENCRYPT */
 
