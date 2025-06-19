@@ -2220,6 +2220,7 @@ struct sev_gmem_populate_args {
 	__u8 type;
 	int sev_fd;
 	int fw_error;
+	struct kvm_vcpu *vcpu;
 };
 
 static int sev_gmem_post_populate(struct kvm *kvm, gfn_t gfn_start, kvm_pfn_t pfn,
@@ -2275,6 +2276,12 @@ static int sev_gmem_post_populate(struct kvm *kvm, gfn_t gfn_start, kvm_pfn_t pf
 			goto fw_err;
 	}
 
+	if (sev_populate_args->vcpu) {
+		struct vcpu_svm *svm = to_svm(sev_populate_args->vcpu);
+
+		svm->vmcb->control.vmsa_pa = pfn_to_hpa(pfn);
+	}
+
 	return 0;
 
 fw_err:
@@ -2320,9 +2327,9 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	struct sev_gmem_populate_args sev_populate_args = {0};
 	struct kvm_sev_snp_launch_update params;
 	struct kvm_memory_slot *memslot;
+	struct kvm_vcpu *vcpu;
 	long npages, count;
 	void __user *src;
-	int ret = 0;
 
 	if (!sev_snp_guest(kvm) || !sev->snp_context)
 		return -EINVAL;
@@ -2335,11 +2342,21 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	if (!PAGE_ALIGNED(params.len) || params.flags ||
 	    (params.type != KVM_SEV_SNP_PAGE_TYPE_NORMAL &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_VMSA &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_ZERO &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_UNMEASURED &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_SECRETS &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_CPUID))
 		return -EINVAL;
+
+	/* VCPU ID is only valid for the VMSA page type */
+	if (params.type == KVM_SEV_SNP_PAGE_TYPE_VMSA) {
+		vcpu = kvm_get_vcpu_by_id(kvm, params.vcpu_id);
+		if (!vcpu)
+			return -EINVAL;
+	} else {
+		vcpu = NULL;
+	}
 
 	npages = params.len / PAGE_SIZE;
 
@@ -2362,16 +2379,15 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	 * initial expected state and better guard against unexpected
 	 * situations.
 	 */
-	mutex_lock(&kvm->slots_lock);
+	guard(mutex)(&kvm->slots_lock);
 
 	memslot = gfn_to_memslot(kvm, params.gfn_start);
-	if (!kvm_slot_can_be_private(memslot)) {
-		ret = -EINVAL;
-		goto out;
-	}
+	if (!kvm_slot_can_be_private(memslot))
+		return -EINVAL;
 
 	sev_populate_args.sev_fd = argp->sev_fd;
 	sev_populate_args.type = params.type;
+	sev_populate_args.vcpu = vcpu;
 	src = params.type == KVM_SEV_SNP_PAGE_TYPE_ZERO ? NULL : u64_to_user_ptr(params.uaddr);
 
 	count = kvm_gmem_populate(kvm, params.gfn_start, src, npages,
@@ -2380,22 +2396,32 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		argp->error = sev_populate_args.fw_error;
 		pr_debug("%s: kvm_gmem_populate failed, ret %ld (fw_error %d)\n",
 			 __func__, count, argp->error);
-		ret = -EIO;
-	} else {
-		params.gfn_start += count;
-		params.len -= count * PAGE_SIZE;
-		if (params.type != KVM_SEV_SNP_PAGE_TYPE_ZERO)
-			params.uaddr += count * PAGE_SIZE;
-
-		ret = 0;
-		if (copy_to_user(u64_to_user_ptr(argp->data), &params, sizeof(params)))
-			ret = -EFAULT;
+		return -EIO;
 	}
 
-out:
-	mutex_unlock(&kvm->slots_lock);
+	params.gfn_start += count;
+	params.len -= count * PAGE_SIZE;
+	if (params.type != KVM_SEV_SNP_PAGE_TYPE_ZERO)
+		params.uaddr += count * PAGE_SIZE;
 
-	return ret;
+	if (copy_to_user(u64_to_user_ptr(argp->data), &params, sizeof(params)))
+		return -EFAULT;
+
+	if (vcpu) {
+		sev->vmsa_measured = true;
+		vcpu->arch.guest_state_protected = true;
+
+		/*
+		 * SEV-ES (and thus SNP) guest mandates LBR Virtualization to
+		 * be _always_ ON. Enable it only after setting
+		 * guest_state_protected because KVM_SET_MSRS allows dynamic
+		 * toggling of LBRV (for performance reason) on write access to
+		 * MSR_IA32_DEBUGCTLMSR when guest_state_protected is not set.
+		 */
+		svm_enable_lbrv(vcpu);
+	}
+
+	return 0;
 }
 
 static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
@@ -2405,6 +2431,10 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	struct kvm_vcpu *vcpu;
 	unsigned long i;
 	int ret;
+
+	/* If already measured through LAUNCH_UPDATE, then nothing to do. */
+	if (sev->vmsa_measured)
+		return 0;
 
 	data.gctx_paddr = __psp_pa(sev->snp_context);
 	data.page_type = SNP_PAGE_TYPE_VMSA;
