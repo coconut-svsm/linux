@@ -233,6 +233,9 @@ struct vcpu_sev_es_state {
 	bool received_first_sipi;
 	unsigned int ap_reset_hold_type;
 
+	/* Per-VCPU SEV features */
+	u64 vmsa_features;
+
 	/* SEV-ES scratch area support */
 	u64 sw_scratch;
 	void *ghcb_sa;

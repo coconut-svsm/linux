@@ -1290,6 +1290,8 @@ static int svm_vcpu_create(struct kvm_vcpu *vcpu)
 		goto out;
 
 	if (sev_es_guest(vcpu->kvm)) {
+		struct kvm_sev_info *sev = to_kvm_sev_info(vcpu->kvm);
+
 		/*
 		 * SEV-ES guests require a separate VMSA page used to contain
 		 * the encrypted register state of the guest.
@@ -1297,6 +1299,9 @@ static int svm_vcpu_create(struct kvm_vcpu *vcpu)
 		vmsa_page = snp_safe_alloc_page();
 		if (!vmsa_page)
 			goto error_free_vmcb_page;
+
+		/* Sync VM SEV_FEATURES to VCPU - Might be overwritten later */
+		svm->sev_es.vmsa_features = sev->vmsa_features;
 	}
 
 	err = avic_init_vcpu(svm);

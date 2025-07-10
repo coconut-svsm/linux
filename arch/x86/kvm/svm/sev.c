@@ -148,10 +148,7 @@ static inline bool is_mirroring_enc_context(struct kvm *kvm)
 
 static bool sev_vcpu_has_debug_swap(struct vcpu_svm *svm)
 {
-	struct kvm_vcpu *vcpu = &svm->vcpu;
-	struct kvm_sev_info *sev = to_kvm_sev_info(vcpu->kvm);
-
-	return sev->vmsa_features & SVM_SEV_FEAT_DEBUG_SWAP;
+	return svm->sev_es.vmsa_features & SVM_SEV_FEAT_DEBUG_SWAP;
 }
 
 /* Must be called with the sev_bitmap_lock held */
@@ -837,7 +834,6 @@ e_unpin:
 static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 {
 	struct kvm_vcpu *vcpu = &svm->vcpu;
-	struct kvm_sev_info *sev = to_kvm_sev_info(vcpu->kvm);
 	struct sev_es_save_area *save = svm->sev_es.vmsa;
 	struct xregs_state *xsave;
 	const u8 *s;
@@ -883,7 +879,7 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	save->xss  = svm->vcpu.arch.ia32_xss;
 	save->dr6  = svm->vcpu.arch.dr6;
 
-	save->sev_features = sev->vmsa_features;
+	save->sev_features = svm->sev_es.vmsa_features;
 
 	/*
 	 * Skip FPU and AVX setup with KVM_SEV_ES_INIT to avoid
@@ -4001,9 +3997,9 @@ static int sev_snp_ap_creation(struct vcpu_svm *svm)
 	switch (request) {
 	case SVM_VMGEXIT_AP_CREATE_ON_INIT:
 	case SVM_VMGEXIT_AP_CREATE:
-		if (vcpu->arch.regs[VCPU_REGS_RAX] != sev->vmsa_features) {
+		if (vcpu->arch.regs[VCPU_REGS_RAX] != svm->sev_es.vmsa_features) {
 			vcpu_unimpl(vcpu, "vmgexit: mismatched AP sev_features [%#lx] != [%#llx] from guest\n",
-				    vcpu->arch.regs[VCPU_REGS_RAX], sev->vmsa_features);
+				    vcpu->arch.regs[VCPU_REGS_RAX], svm->sev_es.vmsa_features);
 			return -EINVAL;
 		}
 
@@ -4599,7 +4595,6 @@ static void sev_snp_init_vmcb(struct vcpu_svm *svm)
 
 static void sev_es_init_vmcb(struct vcpu_svm *svm)
 {
-	struct kvm_sev_info *sev = to_kvm_sev_info(svm->vcpu.kvm);
 	struct vmcb *vmcb = svm->vmcb01.ptr;
 
 	svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_SEV_ES_ENABLE;
@@ -4619,7 +4614,7 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm)
 	}
 
 	if (cpu_feature_enabled(X86_FEATURE_ALLOWED_SEV_FEATURES))
-		svm->vmcb->control.allowed_sev_features = sev->vmsa_features |
+		svm->vmcb->control.allowed_sev_features = svm->sev_es.vmsa_features |
 							  VMCB_ALLOWED_SEV_FEATURES_VALID;
 
 	/* Can't intercept CR register access, HV can't modify CR registers */
