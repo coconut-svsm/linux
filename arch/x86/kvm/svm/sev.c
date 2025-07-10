@@ -4052,6 +4052,29 @@ static unsigned int get_ap_creation_apic_id(struct vcpu_svm *svm)
 	return upper_32_bits(svm->vmcb->control.exit_info_1);
 }
 
+/* SEV_FEATURE flags other planes are allowed to change */
+#define GUEST_CONTROLLED_SEV_FEATURES	(SVM_SEV_FEAT_RESTRICTED_INJECTION | \
+					 SVM_SEV_FEAT_ALTERNATE_INJECTION)
+
+static bool validate_sev_features(struct kvm_vcpu *vcpu, unsigned vmpl, u64 sev_features)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	u64 current_features = svm->sev_es.vmsa_features | GUEST_CONTROLLED_SEV_FEATURES;
+	u64 create_features = sev_features | GUEST_CONTROLLED_SEV_FEATURES;
+
+	/* Alternate Injection can not be supported for VMPL0 */
+	if ((vmpl == 0) && (sev_features & SVM_SEV_FEAT_ALTERNATE_INJECTION))
+		return false;
+
+	if (current_features != create_features) {
+		vcpu_unimpl(vcpu, "vmgexit: mismatched AP sev_features [%#llx] != [%#llx] from guest\n",
+				sev_features, svm->sev_es.vmsa_features);
+		return false;
+	}
+
+	return true;
+}
+
 static int sev_snp_continue_ap_creation(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -4095,11 +4118,9 @@ static int sev_snp_continue_ap_creation(struct kvm_vcpu *vcpu)
 	switch (request) {
 	case SVM_VMGEXIT_AP_CREATE_ON_INIT:
 	case SVM_VMGEXIT_AP_CREATE:
-		if (vcpu->arch.regs[VCPU_REGS_RAX] != svm->sev_es.vmsa_features) {
-			vcpu_unimpl(vcpu, "vmgexit: mismatched AP sev_features [%#lx] != [%#llx] from guest\n",
-				    vcpu->arch.regs[VCPU_REGS_RAX], svm->sev_es.vmsa_features);
+
+		if (!validate_sev_features(vcpu, vmpl, vcpu->arch.regs[VCPU_REGS_RAX]))
 			return -EINVAL;
-		}
 
 		if (!page_address_valid(vcpu, svm->vmcb->control.exit_info_2)) {
 			vcpu_unimpl(vcpu, "vmgexit: invalid AP VMSA address [%#llx] from guest\n",
@@ -4122,6 +4143,7 @@ static int sev_snp_continue_ap_creation(struct kvm_vcpu *vcpu)
 		}
 
 		target_svm->sev_es.snp_vmsa_gpa = svm->vmcb->control.exit_info_2;
+		target_svm->sev_es.vmsa_features = vcpu->arch.regs[VCPU_REGS_RAX];
 		break;
 	case SVM_VMGEXIT_AP_DESTROY:
 		target_svm->sev_es.snp_vmsa_gpa = INVALID_PAGE;

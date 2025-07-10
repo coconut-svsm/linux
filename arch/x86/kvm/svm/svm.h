@@ -889,10 +889,10 @@ void sev_snp_cancel_injection(struct kvm_vcpu *vcpu);
 bool sev_snp_blocked(enum inject_type type, struct kvm_vcpu *vcpu);
 static inline bool sev_snp_is_rinj_active(struct kvm_vcpu *vcpu)
 {
-	struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+	struct vcpu_svm *svm = to_svm(vcpu);
 
 	return sev_snp_guest(vcpu->kvm) &&
-		(sev->vmsa_features & SVM_SEV_FEAT_RESTRICTED_INJECTION);
+		(svm->sev_es.vmsa_features & SVM_SEV_FEAT_RESTRICTED_INJECTION);
 };
 #else
 static inline struct page *snp_safe_alloc_page_node(int node, gfp_t gfp)
