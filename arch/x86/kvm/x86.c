@@ -10552,9 +10552,14 @@ static bool kvm_compute_apicv_inhibit(struct kvm *kvm,
 				      enum kvm_apicv_inhibit reason)
 {
 	int i;
-	for (i = 0; i < KVM_MAX_VCPU_PLANES; i++)
-		if (test_bit(reason, &kvm->planes[i]->arch.apicv_inhibit_reasons))
+	for (i = 0; i < KVM_MAX_VCPU_PLANES; i++) {
+		struct kvm_plane *plane = kvm_get_plane(kvm, i);
+		if (!plane)
+			continue;
+
+		if (test_bit(reason, &plane->arch.apicv_inhibit_reasons))
 			return true;
+	}
 
 	return false;
 }
@@ -11659,10 +11664,13 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu *plane0_vcpu = vcpu;
 	int plane_id = READ_ONCE(vcpu->run->plane);
-	struct kvm_plane *plane = vcpu->kvm->planes[plane_id];
+	struct kvm_plane *plane = kvm_get_plane(vcpu->kvm, plane_id);
 	u16 req_exit_planes = READ_ONCE(vcpu->run->req_exit_planes) & ~BIT(plane_id);
 	u16 irr_pending_planes;
 	int r;
+
+	if (!plane)
+		return -EINVAL;
 
 	if (plane_id) {
 		vcpu = kvm_get_plane_vcpu(plane, vcpu->vcpu_id);

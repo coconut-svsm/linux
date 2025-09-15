@@ -1191,7 +1191,7 @@ static inline bool kvm_apic_map_get_dest_lapic(struct kvm_plane *plane,
 bool kvm_irq_delivery_to_apic_fast(struct kvm *kvm, struct kvm_lapic *src,
 		struct kvm_lapic_irq *irq, int *r, struct dest_map *dest_map)
 {
-	struct kvm_plane *plane = kvm->planes[irq->plane];
+	struct kvm_plane *plane = kvm_get_plane(kvm, irq->plane);
 	struct kvm_apic_map *map;
 	unsigned long bitmap;
 	struct kvm_lapic **dst = NULL;

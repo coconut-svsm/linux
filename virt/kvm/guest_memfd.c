@@ -631,7 +631,7 @@ EXPORT_SYMBOL_GPL(kvm_gmem_get_pfn);
 long kvm_gmem_populate(struct kvm *kvm, gfn_t start_gfn, void __user *src, long npages,
 		       kvm_gmem_populate_cb post_populate, void *opaque)
 {
-	struct kvm_plane *plane0 = kvm->planes[0];
+	struct kvm_plane *plane0 = kvm_get_plane(kvm, 0);
 	struct file *file;
 	struct kvm_memory_slot *slot;
 	void __user *p;

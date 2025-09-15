@@ -921,6 +921,14 @@ struct kvm {
 #define vcpu_err(vcpu, fmt, ...)					\
 	kvm_err("vcpu%i " fmt, (vcpu)->vcpu_id, ## __VA_ARGS__)
 
+static inline struct kvm_plane *kvm_get_plane(struct kvm *kvm, u16 plane_id)
+{
+	if (plane_id < KVM_MAX_VCPU_PLANES)
+		return kvm->planes[plane_id];
+	else
+		return NULL;
+}
+
 static inline void kvm_vm_dead(struct kvm *kvm)
 {
 	kvm->vm_dead = true;
