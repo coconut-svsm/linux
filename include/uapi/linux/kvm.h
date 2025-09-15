@@ -1031,7 +1031,7 @@ struct kvm_irq_routing_entry {
 	__u32 gsi;
 	__u32 type;
 	__u32 flags;
-	__u32 pad;
+	__u32 plane;
 	union {
 		struct kvm_irq_routing_irqchip irqchip;
 		struct kvm_irq_routing_msi msi;

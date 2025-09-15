@@ -200,11 +200,14 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 {
 	int r = -1;
 	struct kvm_vcpu *vcpu, *lowest = NULL;
-	struct kvm_plane *plane = kvm->planes[irq->plane];
+	struct kvm_plane *plane = kvm_get_plane(kvm, irq->plane);
 	unsigned long i, dest_vcpu_bitmap[BITS_TO_LONGS(KVM_MAX_VCPUS)];
 	unsigned int dest_vcpus = 0;
 
-	if (kvm_irq_delivery_to_apic_fast(kvm, src, irq, &r, dest_map))
+	if (KVM_BUG_ON(!plane, kvm))
+		return 0;
+
+	if (kvm_irq_delivery_to_apic_fast(plane, src, irq, &r, dest_map))
 		return r;
 
 	if (irq->dest_mode == APIC_DEST_PHYSICAL &&
@@ -301,6 +304,7 @@ int kvm_arch_set_irq_inatomic(struct kvm_kernel_irq_routing_entry *e,
 			      struct kvm *kvm, int irq_source_id, int level,
 			      bool line_status)
 {
+	struct kvm_plane *plane = NULL;
 	struct kvm_lapic_irq irq;
 	int r;
 
@@ -317,7 +321,11 @@ int kvm_arch_set_irq_inatomic(struct kvm_kernel_irq_routing_entry *e,
 
 		kvm_msi_to_lapic_irq(kvm, e, &irq);
 
-		if (kvm_irq_delivery_to_apic_fast(kvm, NULL, &irq, &r, NULL))
+		plane = kvm_get_plane(kvm, irq.plane);
+		if (KVM_BUG_ON(!plane, kvm))
+			return 0;
+
+		if (kvm_irq_delivery_to_apic_fast(plane, NULL, &irq, &r, NULL))
 			return r;
 		break;
 
@@ -356,6 +364,9 @@ int kvm_set_routing_entry(struct kvm *kvm,
 			  struct kvm_kernel_irq_routing_entry *e,
 			  const struct kvm_irq_routing_entry *ue)
 {
+	if (kvm_get_plane(kvm, ue->plane) == NULL)
+		return -EINVAL;
+
 	/* We can't check irqchip_in_kernel() here as some callers are
 	 * currently initializing the irqchip. Other callers should therefore
 	 * check kvm_arch_can_set_irq_routing() before calling this function.
@@ -391,6 +402,7 @@ int kvm_set_routing_entry(struct kvm *kvm,
 		e->msi.address_lo = ue->u.msi.address_lo;
 		e->msi.address_hi = ue->u.msi.address_hi;
 		e->msi.data = ue->u.msi.data;
+		e->msi.plane = ue->plane;
 
 		if (kvm_msi_route_invalid(kvm, e))
 			return -EINVAL;
