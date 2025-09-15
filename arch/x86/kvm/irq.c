@@ -200,6 +200,7 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 {
 	int r = -1;
 	struct kvm_vcpu *vcpu, *lowest = NULL;
+	struct kvm_plane *plane = kvm->planes[irq->plane];
 	unsigned long i, dest_vcpu_bitmap[BITS_TO_LONGS(KVM_MAX_VCPUS)];
 	unsigned int dest_vcpus = 0;
 
@@ -214,7 +215,7 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 
 	memset(dest_vcpu_bitmap, 0, sizeof(dest_vcpu_bitmap));
 
-	kvm_for_each_vcpu(i, vcpu, kvm) {
+	kvm_for_each_plane_vcpu(i, vcpu, plane) {
 		if (!kvm_apic_present(vcpu))
 			continue;
 
@@ -243,7 +244,7 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 		int idx = kvm_vector_to_index(irq->vector, dest_vcpus,
 					dest_vcpu_bitmap, KVM_MAX_VCPUS);
 
-		lowest = kvm_get_vcpu(kvm, idx);
+		lowest = kvm_get_plane_vcpu(plane, idx);
 	}
 
 	if (lowest)
@@ -270,6 +271,7 @@ static void kvm_msi_to_lapic_irq(struct kvm *kvm,
 	irq->delivery_mode = msg.arch_data.delivery_mode << 8;
 	irq->msi_redir_hint = msg.arch_addr_lo.redirect_hint;
 	irq->level = 1;
+	irq->plane = e->msi.plane;
 	irq->shorthand = APIC_DEST_NOSHORT;
 }
 
