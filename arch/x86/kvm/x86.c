@@ -10694,6 +10694,14 @@ static void kvm_vcpu_reload_apic_access_page(struct kvm_vcpu *vcpu)
 	kvm_x86_call(set_apic_access_page_addr)(vcpu);
 }
 
+static bool need_plane_switch(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->plane == 0)
+		return false;
+
+	return kvm_vcpu_has_events(vcpu->plane0);
+}
+
 /*
  * Called within kvm->srcu read side.
  * Returns 1 to let vcpu_run() continue the guest execution loop without
@@ -10914,6 +10922,11 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			update_cr8_intercept(vcpu);
 			kvm_lapic_sync_to_vapic(vcpu);
 		}
+	}
+
+	if (need_plane_switch(vcpu)) {
+		r = kvm_request_plane_switch(vcpu, 0);
+		goto out;
 	}
 
 	r = kvm_mmu_reload(vcpu);
