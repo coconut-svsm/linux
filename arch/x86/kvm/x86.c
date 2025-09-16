@@ -11573,6 +11573,12 @@ static int kvm_vcpu_ioctl_run_plane(struct kvm_vcpu *vcpu)
 		 * APIC and thus cancel the timer or drop the IRQ (if the timer
 		 * already expired).
 		 */
+
+		if (vcpu->plane > 0) {
+			r = kvm_request_plane_switch(vcpu, 0);
+			goto out;
+		}
+
 		kvm_vcpu_srcu_read_unlock(vcpu);
 		kvm_vcpu_block(vcpu);
 		kvm_vcpu_srcu_read_lock(vcpu);
