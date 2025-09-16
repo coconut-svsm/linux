@@ -202,6 +202,9 @@ int kvm_set_irq_routing(struct kvm *kvm,
 			goto out;
 
 		r = -EINVAL;
+		if (kvm_get_plane(kvm, ue->plane) == NULL)
+			goto free_entry;
+
 		switch (ue->type) {
 		case KVM_IRQ_ROUTING_MSI:
 			if (ue->flags & ~KVM_MSI_VALID_DEVID)
