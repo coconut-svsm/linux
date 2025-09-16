@@ -137,6 +137,7 @@ struct kvm_xen_exit {
 
 struct kvm_plane_event_exit {
 #define KVM_PLANE_EVENT_INTERRUPT    1
+#define KVM_PLANE_EVENT_SWITCH       2
 	__u16 cause;
 	__u16 pending_event_planes;
 	__u16 target;

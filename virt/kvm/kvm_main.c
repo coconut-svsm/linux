@@ -3868,6 +3868,17 @@ bool kvm_vcpu_wake_up(struct kvm_vcpu *vcpu)
 }
 EXPORT_SYMBOL_GPL(kvm_vcpu_wake_up);
 
+int kvm_request_plane_switch(struct kvm_vcpu *vcpu, u16 plane_id)
+{
+	vcpu->run->exit_reason = KVM_EXIT_PLANE_EVENT;
+	memset(&vcpu->run->plane_event, 0, sizeof(vcpu->run->plane_event));
+	vcpu->run->plane_event.cause = KVM_PLANE_EVENT_SWITCH;
+	vcpu->run->plane_event.target = BIT(plane_id);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(kvm_request_plane_switch);
+
 #ifndef CONFIG_S390
 /*
  * Kick a sleeping VCPU, or a guest VCPU in guest mode, into host kernel mode.
