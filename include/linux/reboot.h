@@ -33,6 +33,7 @@ enum reboot_type {
 	BOOT_EFI	= 'e',
 	BOOT_CF9_FORCE	= 'p',
 	BOOT_CF9_SAFE	= 'q',
+	BOOT_SVSM	= 's',
 };
 extern enum reboot_type reboot_type;
 

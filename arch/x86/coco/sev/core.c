@@ -2251,6 +2251,7 @@ found_cc_info:
 
 static __head void svsm_setup(struct cc_blob_sev_info *cc_info)
 {
+	struct snp_secrets_page *secrets_page;
 	struct svsm_call call = {};
 	int ret;
 	u64 pa;
@@ -2288,6 +2289,25 @@ static __head void svsm_setup(struct cc_blob_sev_info *cc_info)
 
 	RIP_REL_REF(boot_svsm_caa) = (struct svsm_ca *)pa;
 	RIP_REL_REF(boot_svsm_caa_pa) = pa;
+
+	/*
+	 * SVSM Core Protocol v2 provides a mechanism to reboot a guest OS
+	 * Change the reboot mechanism to use the SVSM reboot.
+	 */
+	secrets_page = (struct snp_secrets_page *)cc_info->secrets_phys;
+	if (secrets_page->svsm_max_version >= 2)
+		RIP_REL_REF(reboot_type) = BOOT_SVSM;
+}
+
+void svsm_reboot(void)
+{
+	struct svsm_call call = {};
+
+	pr_emerg("Got to svsm_reboot\n");
+	call.caa = svsm_get_caa();
+	call.rax = SVSM_CORE_CALL(SVSM_CORE_REBOOT);
+	svsm_perform_call_protocol(&call);
+	pr_emerg("SVSM Reboot returned. It shouldn't have.\n");
 }
 
 bool __head snp_init(struct boot_params *bp)
