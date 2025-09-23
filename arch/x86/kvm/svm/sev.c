@@ -4460,11 +4460,34 @@ static void sev_get_apic_ids(struct vcpu_svm *svm)
 	kvfree(desc);
 }
 
+static bool sev_snp_run_vmpl_wake(struct kvm_vcpu *vcpu, unsigned int vmpl)
+{
+	struct kvm_plane *target_plane = vcpu->kvm->planes[vmpl];
+	struct kvm_vcpu *target_vcpu;
+
+	if (!target_plane)
+		return false;
+
+	target_vcpu = kvm_get_plane_vcpu_by_id(target_plane, vcpu->vcpu_id);
+
+	if (!target_vcpu)
+		return false;
+
+	kvm_set_mp_state(target_vcpu, KVM_MP_STATE_RUNNABLE);
+
+	return true;
+}
+
+
 static int __sev_snp_run_vmpl(struct vcpu_svm *svm, unsigned int vmpl)
 {
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 
-	return kvm_request_plane_switch(vcpu, vmpl);
+	if (sev_snp_run_vmpl_wake(vcpu, vmpl)) {
+		return kvm_request_plane_switch(vcpu, vmpl);
+	} else {
+		return 1;
+	}
 }
 
 static int sev_snp_run_vmpl(struct vcpu_svm *svm)
