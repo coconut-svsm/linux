@@ -28,14 +28,14 @@ struct kvm_cpuid_entry2 *kvm_find_cpuid_entry2(struct kvm_cpuid_entry2 *entries,
 static inline struct kvm_cpuid_entry2 *kvm_find_cpuid_entry_index(struct kvm_vcpu *vcpu,
 								  u32 function, u32 index)
 {
-	return kvm_find_cpuid_entry2(vcpu->arch.cpuid_entries, vcpu->arch.cpuid_nent,
+	return kvm_find_cpuid_entry2(vcpu->plane0->arch.cpuid_entries, vcpu->plane0->arch.cpuid_nent,
 				     function, index);
 }
 
 static inline struct kvm_cpuid_entry2 *kvm_find_cpuid_entry(struct kvm_vcpu *vcpu,
 							    u32 function)
 {
-	return kvm_find_cpuid_entry2(vcpu->arch.cpuid_entries, vcpu->arch.cpuid_nent,
+	return kvm_find_cpuid_entry2(vcpu->plane0->arch.cpuid_entries, vcpu->plane0->arch.cpuid_nent,
 				     function, KVM_CPUID_INDEX_NOT_SIGNIFICANT);
 }
 
@@ -266,7 +266,7 @@ static __always_inline bool guest_cpu_cap_has(struct kvm_vcpu *vcpu,
 		     x86_feature == X86_FEATURE_OSXSAVE ||
 		     x86_feature == X86_FEATURE_OSPKE);
 
-	return vcpu->arch.cpu_caps[x86_leaf] & __feature_bit(x86_feature);
+	return vcpu->plane0->arch.cpu_caps[x86_leaf] & __feature_bit(x86_feature);
 }
 
 static inline bool kvm_vcpu_is_legal_cr3(struct kvm_vcpu *vcpu, unsigned long cr3)

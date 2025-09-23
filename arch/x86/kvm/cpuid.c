@@ -138,6 +138,8 @@ static int kvm_check_cpuid(struct kvm_vcpu *vcpu)
 	struct kvm_cpuid_entry2 *best;
 	u64 xfeatures;
 
+	vcpu = vcpu->plane0;
+
 	/*
 	 * The existing code assumes virtual address is 48-bit or 57-bit in the
 	 * canonical address checks; exit if it is ever changed.
@@ -517,6 +519,9 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
 	u32 vcpu_caps[NR_KVM_CPU_CAPS];
 	int r;
 
+	/* Always store CPUID state in plane0 */
+	vcpu = vcpu->plane0;
+
 	/*
 	 * Swap the existing (old) entries with the incoming (new) entries in
 	 * order to massage the new entries, e.g. to account for dynamic bits
@@ -545,7 +550,7 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
 	 * KVM_SET_CPUID{,2} again. To support this legacy behavior, check
 	 * whether the supplied CPUID data is equal to what's already set.
 	 */
-	if (kvm_vcpu_has_run(vcpu) || vcpu->has_planes) {
+	if (kvm_vcpu_has_run(vcpu)) {
 		r = kvm_cpuid_check_equal(vcpu, e2, nent);
 		if (r)
 			goto err;
@@ -657,6 +662,8 @@ int kvm_vcpu_ioctl_get_cpuid2(struct kvm_vcpu *vcpu,
 			      struct kvm_cpuid2 *cpuid,
 			      struct kvm_cpuid_entry2 __user *entries)
 {
+	vcpu = vcpu->plane0;
+
 	if (cpuid->nent < vcpu->arch.cpuid_nent)
 		return -E2BIG;
 
@@ -2008,6 +2015,8 @@ bool kvm_cpuid(struct kvm_vcpu *vcpu, u32 *eax, u32 *ebx,
 	u32 orig_function = *eax, function = *eax, index = *ecx;
 	struct kvm_cpuid_entry2 *entry;
 	bool exact, used_max_basic = false;
+
+	vcpu = vcpu->plane0;
 
 	if (vcpu->arch.cpuid_dynamic_bits_dirty)
 		kvm_update_cpuid_runtime(vcpu);
