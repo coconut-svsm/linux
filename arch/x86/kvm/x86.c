@@ -11219,6 +11219,9 @@ bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
 	if (kvm_xen_has_pending_events(vcpu))
 		return true;
 
+	if (kvm_test_request(KVM_REQ_RUN_PLANE, vcpu->plane0))
+		return true;
+
 	return false;
 }
 EXPORT_SYMBOL_GPL(kvm_vcpu_has_events);
@@ -11306,6 +11309,10 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 	vcpu->run->exit_reason = KVM_EXIT_UNKNOWN;
 
 	for (;;) {
+		if (kvm_check_request(KVM_REQ_RUN_PLANE, vcpu)) {
+			kvm_set_mp_state(vcpu, KVM_MP_STATE_RUNNABLE);
+		}
+
 		/*
 		 * If another guest vCPU requests a PV TLB flush in the middle
 		 * of instruction emulation, the rest of the emulation could

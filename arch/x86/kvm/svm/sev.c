@@ -4162,6 +4162,8 @@ static int sev_snp_continue_ap_creation(struct kvm_vcpu *vcpu)
 
 	/* Signal the vCPU to update its state */
 	kvm_make_request(KVM_REQ_UPDATE_PROTECTED_GUEST_STATE, target_vcpu);
+	/* Signal wakeup of plane0 */
+	kvm_make_request(KVM_REQ_RUN_PLANE, target_vcpu->plane0);
 
 	target_svm->sev_es.snp_ap_waiting_for_reset = true;
 	target_svm->sev_es.snp_ap_runnable = (request == SVM_VMGEXIT_AP_CREATE);

@@ -130,6 +130,7 @@
 #define KVM_REQ_UPDATE_PROTECTED_GUEST_STATE \
 	KVM_ARCH_REQ_FLAGS(34, KVM_REQUEST_WAIT)
 #define KVM_REQ_PLANE_INTERRUPT		KVM_ARCH_REQ(35)
+#define KVM_REQ_RUN_PLANE		KVM_ARCH_REQ(36)
 
 #define CR0_RESERVED_BITS                                               \
 	(~(unsigned long)(X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS \
