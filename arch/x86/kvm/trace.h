@@ -641,14 +641,15 @@ TRACE_EVENT(kvm_apic_ipi,
 );
 
 TRACE_EVENT(kvm_apic_accept_irq,
-	    TP_PROTO(__u32 apicid, __u16 dm, __u16 tm, __u8 vec),
-	    TP_ARGS(apicid, dm, tm, vec),
+	    TP_PROTO(__u32 apicid, __u16 dm, __u16 tm, __u8 vec, u32 plane),
+	    TP_ARGS(apicid, dm, tm, vec, plane),
 
 	TP_STRUCT__entry(
 		__field(	__u32,		apicid		)
 		__field(	__u16,		dm		)
 		__field(	__u16,		tm		)
 		__field(	__u8,		vec		)
+		__field(	__u32,		plane		)
 	),
 
 	TP_fast_assign(
@@ -656,10 +657,11 @@ TRACE_EVENT(kvm_apic_accept_irq,
 		__entry->dm		= dm;
 		__entry->tm		= tm;
 		__entry->vec		= vec;
+		__entry->plane		= plane;
 	),
 
-	TP_printk("apicid %x vec %u (%s|%s)",
-		  __entry->apicid, __entry->vec,
+	TP_printk("apicid %x vec %u plane %d (%s|%s)",
+		  __entry->apicid, __entry->vec, __entry->plane,
 		  __print_symbolic((__entry->dm >> 8 & 0x7), kvm_deliver_mode),
 		  __entry->tm ? "level" : "edge")
 );

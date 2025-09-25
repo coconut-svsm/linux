@@ -1315,7 +1315,7 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 	struct kvm_vcpu *vcpu = apic->vcpu;
 
 	trace_kvm_apic_accept_irq(vcpu->vcpu_id, delivery_mode,
-				  trig_mode, vector);
+				  trig_mode, vector, vcpu->plane);
 	switch (delivery_mode) {
 	case APIC_DM_LOWEST:
 		vcpu->arch.apic_arb_prio++;
