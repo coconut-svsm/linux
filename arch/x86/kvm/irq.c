@@ -265,7 +265,7 @@ static void kvm_msi_to_lapic_irq(struct kvm *kvm,
 			       .data = e->msi.data };
 
 	trace_kvm_msi_set_irq(msg.address_lo | (kvm->arch.x2apic_format ?
-			      (u64)msg.address_hi << 32 : 0), msg.data);
+			      (u64)msg.address_hi << 32 : 0), msg.data, e->msi.plane);
 
 	irq->dest_id = x86_msi_msg_get_destid(&msg, kvm->arch.x2apic_format);
 	irq->vector = msg.arch_data.vector;

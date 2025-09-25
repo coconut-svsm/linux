@@ -318,26 +318,29 @@ TRACE_EVENT(kvm_ioapic_delayed_eoi_inj,
 #endif
 
 TRACE_EVENT(kvm_msi_set_irq,
-	    TP_PROTO(__u64 address, __u64 data),
-	    TP_ARGS(address, data),
+	    TP_PROTO(__u64 address, __u64 data, u32 plane),
+	    TP_ARGS(address, data, plane),
 
 	TP_STRUCT__entry(
 		__field(	__u64,		address		)
 		__field(	__u64,		data		)
+		__field(	__u32,		plane		)
 	),
 
 	TP_fast_assign(
 		__entry->address	= address;
 		__entry->data		= data;
+		__entry->plane		= plane;
 	),
 
-	TP_printk("dst %llx vec %u (%s|%s|%s%s)",
+	TP_printk("dst %llx vec %u (%s|%s|%s%s) plane %d",
 		  (u8)(__entry->address >> 12) | ((__entry->address >> 32) & 0xffffff00),
 		  (u8)__entry->data,
 		  __print_symbolic((__entry->data >> 8 & 0x7), kvm_deliver_mode),
 		  (__entry->address & (1<<2)) ? "logical" : "physical",
 		  (__entry->data & (1<<15)) ? "level" : "edge",
-		  (__entry->address & (1<<3)) ? "|rh" : "")
+		  (__entry->address & (1<<3)) ? "|rh" : "",
+		  __entry->plane)
 );
 
 #define AREG(x) { APIC_##x, "APIC_" #x }
