@@ -188,8 +188,11 @@ static inline bool kvm_is_error_gpa(gpa_t gpa)
 })
 #define KVM_ARCH_REQ(nr)           KVM_ARCH_REQ_FLAGS(nr, 0)
 
+bool kvm_make_plane_vcpus_request_mask(struct kvm_plane *plane, unsigned int req,
+				 unsigned long *vcpu_bitmap);
 bool kvm_make_vcpus_request_mask(struct kvm *kvm, unsigned int req,
 				 unsigned long *vcpu_bitmap);
+bool kvm_make_all_plane_cpus_request(struct kvm_plane *plane, unsigned int req);
 bool kvm_make_all_cpus_request(struct kvm *kvm, unsigned int req);
 
 #define KVM_USERSPACE_IRQ_SOURCE_ID		0

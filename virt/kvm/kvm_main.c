@@ -241,7 +241,7 @@ static void kvm_make_vcpu_request(struct kvm_vcpu *vcpu, unsigned int req,
 	}
 }
 
-bool kvm_make_vcpus_request_mask(struct kvm *kvm, unsigned int req,
+bool kvm_make_plane_vcpus_request_mask(struct kvm_plane *plane, unsigned int req,
 				 unsigned long *vcpu_bitmap)
 {
 	struct kvm_vcpu *vcpu;
@@ -255,7 +255,7 @@ bool kvm_make_vcpus_request_mask(struct kvm *kvm, unsigned int req,
 	cpumask_clear(cpus);
 
 	for_each_set_bit(i, vcpu_bitmap, KVM_MAX_VCPUS) {
-		vcpu = kvm_get_vcpu(kvm, i);
+		vcpu = kvm_get_plane_vcpu(plane, i);
 		if (!vcpu)
 			continue;
 		kvm_make_vcpu_request(vcpu, req, cpus, me);
@@ -267,7 +267,13 @@ bool kvm_make_vcpus_request_mask(struct kvm *kvm, unsigned int req,
 	return called;
 }
 
-bool kvm_make_all_cpus_request(struct kvm *kvm, unsigned int req)
+bool kvm_make_vcpus_request_mask(struct kvm *kvm, unsigned int req,
+				 unsigned long *vcpu_bitmap)
+{
+	return kvm_make_plane_vcpus_request_mask(kvm_get_plane(kvm, 0), req, vcpu_bitmap);
+}
+
+bool kvm_make_all_plane_cpus_request(struct kvm_plane *plane, unsigned int req)
 {
 	struct kvm_vcpu *vcpu;
 	struct cpumask *cpus;
@@ -280,7 +286,7 @@ bool kvm_make_all_cpus_request(struct kvm *kvm, unsigned int req)
 	cpus = this_cpu_cpumask_var_ptr(cpu_kick_mask);
 	cpumask_clear(cpus);
 
-	kvm_for_each_vcpu(i, vcpu, kvm)
+	kvm_for_each_plane_vcpu(i, vcpu, plane)
 		kvm_make_vcpu_request(vcpu, req, cpus, me);
 
 	called = kvm_kick_many_cpus(cpus, !!(req & KVM_REQUEST_WAIT));
@@ -289,6 +295,11 @@ bool kvm_make_all_cpus_request(struct kvm *kvm, unsigned int req)
 	return called;
 }
 EXPORT_SYMBOL_GPL(kvm_make_all_cpus_request);
+
+bool kvm_make_all_cpus_request(struct kvm *kvm, unsigned int req)
+{
+	return kvm_make_all_plane_cpus_request(kvm_get_plane(kvm, 0), req);
+}
 
 void kvm_flush_remote_tlbs(struct kvm *kvm)
 {
