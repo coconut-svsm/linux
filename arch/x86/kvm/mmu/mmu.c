@@ -5116,7 +5116,7 @@ void kvm_mmu_new_pgd(struct kvm_vcpu *vcpu, gpa_t new_pgd)
 
 	if (force_flush_and_sync_on_reuse) {
 		kvm_make_request(KVM_REQ_MMU_SYNC, vcpu);
-		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu->plane0);
 	}
 
 	/*

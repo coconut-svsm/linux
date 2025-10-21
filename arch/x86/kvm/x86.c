@@ -1126,7 +1126,7 @@ void kvm_post_set_cr0(struct kvm_vcpu *vcpu, unsigned long old_cr0, unsigned lon
 		 * perspective.
 		 */
 		if (!(cr0 & X86_CR0_PG))
-			kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+			kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0);
 	}
 
 	if ((cr0 ^ old_cr0) & KVM_MMU_CR0_ROLE_BITS)
@@ -1328,7 +1328,7 @@ void kvm_post_set_cr4(struct kvm_vcpu *vcpu, unsigned long old_cr4, unsigned lon
 	 */
 	if (((cr4 ^ old_cr4) & X86_CR4_PGE) ||
 	    (!(cr4 & X86_CR4_PCIDE) && (old_cr4 & X86_CR4_PCIDE)))
-		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0);
 
 	/*
 	 * The TLB has to be flushed for the current PCID if any of the
@@ -1338,7 +1338,7 @@ void kvm_post_set_cr4(struct kvm_vcpu *vcpu, unsigned long old_cr4, unsigned lon
 	 */
 	else if (((cr4 ^ old_cr4) & X86_CR4_PAE) ||
 		 ((cr4 & X86_CR4_SMEP) && !(old_cr4 & X86_CR4_SMEP)))
-		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu->plane0);
 
 }
 EXPORT_SYMBOL_GPL(kvm_post_set_cr4);
@@ -1388,7 +1388,7 @@ static void kvm_invalidate_pcid(struct kvm_vcpu *vcpu, unsigned long pcid)
 	 * the CPU may have cached entries in its TLB for the target PCID.
 	 */
 	if (unlikely(tdp_enabled)) {
-		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0);
 		return;
 	}
 
@@ -1399,7 +1399,7 @@ static void kvm_invalidate_pcid(struct kvm_vcpu *vcpu, unsigned long pcid)
 	 */
 	if (kvm_get_active_pcid(vcpu) == pcid) {
 		kvm_make_request(KVM_REQ_MMU_SYNC, vcpu);
-		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu->plane0);
 	}
 
 	/*
@@ -3621,7 +3621,7 @@ static void kvm_vcpu_flush_tlb_all(struct kvm_vcpu *vcpu)
 	kvm_x86_call(flush_tlb_all)(vcpu);
 
 	/* Flushing all ASIDs flushes the current ASID... */
-	kvm_clear_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu);
+	kvm_clear_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu->plane0);
 }
 
 static void kvm_vcpu_flush_tlb_guest(struct kvm_vcpu *vcpu)
@@ -3663,10 +3663,10 @@ static inline void kvm_vcpu_flush_tlb_current(struct kvm_vcpu *vcpu)
  */
 void kvm_service_local_tlb_flush_requests(struct kvm_vcpu *vcpu)
 {
-	if (kvm_check_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu))
+	if (kvm_check_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu->plane0))
 		kvm_vcpu_flush_tlb_current(vcpu);
 
-	if (kvm_check_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu))
+	if (kvm_check_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0))
 		kvm_vcpu_flush_tlb_guest(vcpu);
 }
 EXPORT_SYMBOL_GPL(kvm_service_local_tlb_flush_requests);
@@ -10770,7 +10770,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		 * also flushes the "current" TLB entries, i.e. servicing the
 		 * flush "all" will clear any request to flush "current".
 		 */
-		if (kvm_check_request(KVM_REQ_TLB_FLUSH, vcpu))
+		if (kvm_check_request(KVM_REQ_TLB_FLUSH, vcpu->plane0))
 			kvm_vcpu_flush_tlb_all(vcpu);
 
 		kvm_service_local_tlb_flush_requests(vcpu);
@@ -12141,7 +12141,7 @@ static int __set_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
 
 	if (mmu_reset_needed) {
 		kvm_mmu_reset_context(vcpu);
-		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0);
 	}
 
 	max_bits = KVM_NR_INTERRUPTS;
@@ -12185,7 +12185,7 @@ static int __set_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2)
 	}
 	if (mmu_reset_needed) {
 		kvm_mmu_reset_context(vcpu);
-		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0);
 	}
 	return 0;
 }
@@ -12730,7 +12730,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 	 * CR0 will be '0' prior to RESET).  So we only need to check CR0.PG here.
 	 */
 	if (old_cr0 & X86_CR0_PG) {
-		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0);
 		kvm_mmu_reset_context(vcpu);
 	}
 
@@ -12744,7 +12744,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 	 * performance perspective.
 	 */
 	if (init_event)
-		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0);
 }
 EXPORT_SYMBOL_GPL(kvm_vcpu_reset);
 
@@ -13896,7 +13896,7 @@ int kvm_handle_invpcid(struct kvm_vcpu *vcpu, unsigned long type, gva_t gva)
 
 		fallthrough;
 	case INVPCID_TYPE_ALL_INCL_GLOBAL:
-		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu->plane0);
 		return kvm_skip_emulated_instruction(vcpu);
 
 	default:

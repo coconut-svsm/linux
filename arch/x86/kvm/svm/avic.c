@@ -105,7 +105,7 @@ static void avic_activate_vmcb(struct vcpu_svm *svm)
 		 * Flush the TLB, the guest may have inserted a non-APIC
 		 * mapping into the TLB while AVIC was disabled.
 		 */
-		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, &svm->vcpu);
+		kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, svm->vcpu.plane0);
 
 		/* For xAVIC and hybrid-xAVIC modes */
 		vmcb->control.avic_physical_id |= AVIC_MAX_PHYSICAL_ID;
