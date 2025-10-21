@@ -451,8 +451,7 @@ out:
 	if (old)
 		kvfree_rcu(old, rcu);
 
-	if (plane->plane == 0)
-		kvm_make_scan_ioapic_request(kvm);
+	kvm_make_scan_ioapic_plane_request(plane);
 }
 
 static inline void kvm_mark_apic_map_dirty(struct kvm_vcpu *vcpu)

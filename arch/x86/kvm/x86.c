@@ -10483,9 +10483,20 @@ void kvm_make_scan_ioapic_request_mask(struct kvm *kvm,
 	kvm_make_vcpus_request_mask(kvm, KVM_REQ_SCAN_IOAPIC, vcpu_bitmap);
 }
 
+void kvm_make_scan_ioapic_plane_request_mask(struct kvm_plane *plane,
+					     unsigned long *vcpu_bitmap)
+{
+	kvm_make_plane_vcpus_request_mask(plane, KVM_REQ_SCAN_IOAPIC, vcpu_bitmap);
+}
+
 void kvm_make_scan_ioapic_request(struct kvm *kvm)
 {
 	kvm_make_all_cpus_request(kvm, KVM_REQ_SCAN_IOAPIC);
+}
+
+void kvm_make_scan_ioapic_plane_request(struct kvm_plane *plane)
+{
+	kvm_make_all_plane_cpus_request(plane, KVM_REQ_SCAN_IOAPIC);
 }
 
 void __kvm_vcpu_update_apicv(struct kvm_vcpu *vcpu)

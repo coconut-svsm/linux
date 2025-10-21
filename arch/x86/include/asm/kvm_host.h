@@ -2391,8 +2391,11 @@ unsigned long kvm_get_linear_rip(struct kvm_vcpu *vcpu);
 bool kvm_is_linear_rip(struct kvm_vcpu *vcpu, unsigned long linear_rip);
 
 void kvm_make_scan_ioapic_request(struct kvm *kvm);
+void kvm_make_scan_ioapic_plane_request(struct kvm_plane *plane);
 void kvm_make_scan_ioapic_request_mask(struct kvm *kvm,
 				       unsigned long *vcpu_bitmap);
+void kvm_make_scan_ioapic_plane_request_mask(struct kvm_plane *plane,
+					     unsigned long *vcpu_bitmap);
 
 void kvm_arch_init_plane(struct kvm_plane *plane);
 void kvm_arch_free_plane(struct kvm_plane *plane);

@@ -518,8 +518,15 @@ void kvm_arch_irq_routing_update(struct kvm *kvm)
 	kvm_hv_irq_routing_update(kvm);
 #endif
 
-	if (irqchip_split(kvm))
-		kvm_make_scan_ioapic_request(kvm);
+	if (irqchip_split(kvm)) {
+		int i;
+		for (i = 0; i < KVM_MAX_VCPU_PLANES; ++i) {
+			struct kvm_plane *plane = kvm_get_plane(kvm, i);
+			if (plane == NULL)
+				continue;
+			kvm_make_scan_ioapic_plane_request(plane);
+		}
+	}
 }
 
 static int kvm_pi_update_irte(struct kvm_kernel_irqfd *irqfd,
