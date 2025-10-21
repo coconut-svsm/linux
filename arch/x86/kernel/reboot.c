@@ -26,6 +26,7 @@
 #include <asm/cpu.h>
 #include <asm/nmi.h>
 #include <asm/smp.h>
+#include <asm/sev.h>
 
 #include <linux/ctype.h>
 #include <linux/mc146818rtc.h>
@@ -648,6 +649,15 @@ static void native_machine_emergency_restart(void)
 	if (efi_capsule_pending(NULL)) {
 		pr_info("EFI capsule is pending, forcing EFI reboot.\n");
 		reboot_type = BOOT_EFI;
+	}
+
+	/*
+	 * If we're running under SVSM, try to reboot using SVSM.
+	 */
+	if (snp_vmpl) {
+		pr_emerg("Trying SVSM Reboot\n");
+		snp_issue_svsm_reboot_req();
+		pr_emerg("SVSM Reboot returned.\n");
 	}
 
 	for (;;) {
