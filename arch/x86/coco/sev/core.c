@@ -1638,6 +1638,34 @@ int snp_issue_svsm_attest_req(u64 call_id, struct svsm_call *call,
 }
 EXPORT_SYMBOL_GPL(snp_issue_svsm_attest_req);
 
+void snp_issue_svsm_reboot_req(void)
+{
+	struct svsm_call call;
+	unsigned long flags;
+
+	if (!snp_vmpl)
+		return;
+
+	local_irq_save(flags);
+
+	/*
+	 * Set input registers for the request and set RDX and R8 to known
+	 * values in order to detect length values being returned in them.
+	 */
+	call.caa = svsm_get_caa();
+	call.rax = SVSM_REBOOT_CALL(SVSM_REBOOT_EXECUTE);
+	call.rcx = 0;
+	svsm_perform_call_protocol(&call);
+	/*
+	 * If SVSM_REBOOT_EXECUTE is supported in the underlying SVSM,
+	 * it will NOT return here. If it is not supported, return to
+	 * the caller to try other reboot schemes.
+	 */
+
+	local_irq_restore(flags);
+}
+EXPORT_SYMBOL_GPL(snp_issue_svsm_reboot_req);
+
 static int snp_issue_guest_request(struct snp_guest_req *req)
 {
 	struct snp_req_data *input = &req->input;
