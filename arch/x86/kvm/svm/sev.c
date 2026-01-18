@@ -4475,6 +4475,7 @@ static bool sev_snp_run_vmpl_wake(struct kvm_vcpu *vcpu, unsigned int vmpl)
 	if (!target_vcpu)
 		return false;
 
+	to_svm(target_vcpu)->sev_es.snp_ap_runnable = true;
 	kvm_set_mp_state(target_vcpu, KVM_MP_STATE_RUNNABLE);
 
 	return true;
