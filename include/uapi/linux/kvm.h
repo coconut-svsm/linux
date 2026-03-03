@@ -731,6 +731,11 @@ struct kvm_enable_cap {
 #define KVM_GET_MSR_FEATURE_INDEX_LIST    _IOWR(KVMIO, 0x0a, struct kvm_msr_list)
 
 /*
+ * Maximum number of supported planes
+ */
+#define KVM_MAX_PLANES	16
+
+/*
  * Extension capability list.
  */
 #define KVM_CAP_IRQCHIP	  0
@@ -997,6 +1002,7 @@ struct kvm_enable_cap {
 #define KVM_CAP_S390_KEYOP 247
 #define KVM_CAP_S390_VSIE_ESAMODE 248
 #define KVM_CAP_S390_HPAGE_2G 249
+#define KVM_CAP_PLANES 250
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
