@@ -239,7 +239,7 @@ void vmx_vcpu_pi_put(struct kvm_vcpu *vcpu)
 	 * the cost of propagating PIR.IRR to PID.ON is negligible compared to
 	 * the cost of a spurious IRQ, and vCPU put/load is a slow path.
 	 */
-	if (!vcpu->preempted && kvm_vcpu_is_blocking(vcpu) &&
+	if (!kvm_vcpu_preempted(vcpu) && kvm_vcpu_is_blocking(vcpu) &&
 	    ((is_td_vcpu(vcpu) && tdx_interrupt_allowed(vcpu)) ||
 	     (!is_td_vcpu(vcpu) && !vmx_interrupt_blocked(vcpu))))
 		pi_enable_wakeup_handler(vcpu);
