@@ -324,12 +324,14 @@ struct kvm_mmio_fragment {
 
 struct kvm_vcpu {
 	struct kvm *kvm;
+	struct kvm_plane *plane;
+
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	struct preempt_notifier preempt_notifier;
 #endif
 	int cpu;
 	int vcpu_id; /* id given by userspace at creation */
-	int vcpu_idx; /* index into kvm->vcpu_array */
+	int vcpu_idx; /* index into kvm->planes[]->vcpu_array */
 	int ____srcu_idx; /* Don't use this directly.  You've been warned. */
 #ifdef CONFIG_PROVE_RCU
 	int srcu_depth;
@@ -770,6 +772,9 @@ struct kvm_memslots {
 struct kvm_plane {
 	struct kvm *kvm;
 	unsigned level;
+
+	/* Per-Plane VCPU array */
+	struct xarray vcpu_array;
 };
 
 struct kvm {
@@ -795,7 +800,6 @@ struct kvm {
 	struct kvm_memslots __memslots[KVM_MAX_NR_ADDRESS_SPACES][2];
 	/* The current active memslot set for each address space */
 	struct kvm_memslots __rcu *memslots[KVM_MAX_NR_ADDRESS_SPACES];
-	struct xarray vcpu_array;
 	/*
 	 * Protected by slots_lock, but can be read outside if an
 	 * incorrect answer is acceptable.
@@ -996,9 +1000,9 @@ static inline struct kvm_io_bus *kvm_get_bus(struct kvm *kvm, enum kvm_bus idx)
 					 lockdep_is_held(&kvm->slots_lock));
 }
 
-static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
+static inline struct kvm_vcpu *plane_get_vcpu(struct kvm_plane *plane, int i)
 {
-	int num_vcpus = atomic_read(&kvm->online_vcpus);
+	int num_vcpus = atomic_read(&plane->kvm->online_vcpus);
 
 	/*
 	 * Explicitly verify the target vCPU is online, as the anti-speculation
@@ -1012,13 +1016,21 @@ static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
 
 	/* Pairs with smp_wmb() in kvm_vm_ioctl_create_vcpu.  */
 	smp_rmb();
-	return xa_load(&kvm->vcpu_array, i);
+	return xa_load(&plane->vcpu_array, i);
 }
 
-#define kvm_for_each_vcpu(idx, vcpup, kvm)				\
-	if (atomic_read(&kvm->online_vcpus))				\
-		xa_for_each_range(&kvm->vcpu_array, idx, vcpup, 0,	\
-				  (atomic_read(&kvm->online_vcpus) - 1))
+static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
+{
+	return plane_get_vcpu(kvm->planes[0], i);
+}
+
+#define plane_for_each_vcpu(idx, vcpup, plane)					\
+	if (atomic_read(&plane->kvm->online_vcpus))				\
+		xa_for_each_range(&plane->vcpu_array, idx, vcpup, 0,		\
+				  (atomic_read(&plane->kvm->online_vcpus) - 1))
+
+#define kvm_for_each_vcpu(idx, vcpup, kvm)					\
+	plane_for_each_vcpu(idx, vcpup, kvm->planes[0])
 
 static inline struct kvm_vcpu *kvm_get_vcpu_by_id(struct kvm *kvm, int id)
 {
