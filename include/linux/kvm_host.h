@@ -329,15 +329,21 @@ struct kvm_vcpu_common {
 
 	/* Currently active VCPU */
 	struct kvm_vcpu *current_vcpu;
+
+	/* Scheduling state */
+#ifdef CONFIG_PREEMPT_NOTIFIERS
+	struct preempt_notifier preempt_notifier;
+#endif
+	bool wants_to_run;
+	bool preempted;
+	bool ready;
+	bool scheduled_out;
 };
 
 struct kvm_vcpu {
 	struct kvm *kvm;
 	struct kvm_plane *plane;
 
-#ifdef CONFIG_PREEMPT_NOTIFIERS
-	struct preempt_notifier preempt_notifier;
-#endif
 	int cpu;
 	int vcpu_id; /* id given by userspace at creation */
 	int vcpu_idx; /* index into kvm->planes[]->vcpu_array */
@@ -392,10 +398,6 @@ struct kvm_vcpu {
 		bool dy_eligible;
 	} spin_loop;
 #endif
-	bool wants_to_run;
-	bool preempted;
-	bool ready;
-	bool scheduled_out;
 	struct kvm_vcpu_arch arch;
 	struct kvm_vcpu_stat stat;
 	char stats_id[KVM_STATS_NAME_SIZE];
@@ -416,22 +418,22 @@ struct kvm_vcpu {
 
 static inline bool kvm_vcpu_wants_to_run(struct kvm_vcpu *vcpu)
 {
-	return vcpu->wants_to_run;
+	return vcpu->common->wants_to_run;
 }
 
 static inline bool kvm_vcpu_preempted(struct kvm_vcpu *vcpu)
 {
-	return READ_ONCE(vcpu->preempted);
+	return READ_ONCE(vcpu->common->preempted);
 }
 
 static inline bool kvm_vcpu_ready(struct kvm_vcpu *vcpu)
 {
-	return READ_ONCE(vcpu->ready);
+	return READ_ONCE(vcpu->common->ready);
 }
 
 static inline bool kvm_vcpu_scheduled_out(struct kvm_vcpu *vcpu)
 {
-	return vcpu->scheduled_out;
+	return vcpu->common->scheduled_out;
 }
 
 /*

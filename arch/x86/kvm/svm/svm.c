@@ -233,7 +233,7 @@ int svm_set_efer(struct kvm_vcpu *vcpu, u64 efer)
 			 * and only if the vCPU is actively running, e.g. to
 			 * avoid positives if userspace is stuffing state.
 			 */
-			if (is_guest_mode(vcpu) && vcpu->wants_to_run)
+			if (is_guest_mode(vcpu) && vcpu->common->wants_to_run)
 				kvm_make_request(KVM_REQ_TRIPLE_FAULT, vcpu);
 
 			svm_leave_nested(vcpu);
@@ -2816,7 +2816,7 @@ static bool svm_pat_accesses_gpat(struct kvm_vcpu *vcpu, bool from_host)
 	 * KVM_GET/SET_NESTED_STATE are independent of each other and can
 	 * be ordered arbitrarily during save and restore.
 	 */
-	WARN_ON_ONCE(from_host && vcpu->wants_to_run);
+	WARN_ON_ONCE(from_host && kvm_vcpu_wants_to_run(vcpu));
 	return !from_host && is_guest_mode(vcpu) && l2_has_separate_pat(vcpu);
 }
 

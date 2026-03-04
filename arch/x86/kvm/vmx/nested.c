@@ -619,7 +619,7 @@ static int nested_vmx_check_tpr_shadow_controls(struct kvm_vcpu *vcpu,
 	 * and only perform the check when in KVM_RUN, to avoid a false failure
 	 * if userspace hasn't yet configured memslots during state restore.
 	 */
-	if (warn_on_missed_cc && vcpu->wants_to_run &&
+	if (warn_on_missed_cc && kvm_vcpu_wants_to_run(vcpu) &&
 	    nested_cpu_has(vmcs12, CPU_BASED_TPR_SHADOW) &&
 	    !nested_cpu_has_vid(vmcs12) &&
 	    !nested_cpu_has2(vmcs12, SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES) &&
