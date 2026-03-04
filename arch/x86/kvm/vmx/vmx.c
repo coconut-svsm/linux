@@ -1552,7 +1552,7 @@ void vmx_vcpu_load_vmcs(struct kvm_vcpu *vcpu, int cpu)
  */
 void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 {
-	if (vcpu->scheduled_out && !kvm_pause_in_guest(vcpu->kvm))
+	if (kvm_vcpu_scheduled_out(vcpu) && !kvm_pause_in_guest(vcpu->kvm))
 		shrink_ple_window(vcpu);
 
 	vmx_vcpu_load_vmcs(vcpu, cpu);

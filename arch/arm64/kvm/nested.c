@@ -822,7 +822,7 @@ void kvm_vcpu_put_hw_mmu(struct kvm_vcpu *vcpu)
 	 * scheduling out and not in WFI emulation, suggesting it is likely to
 	 * reuse the MMU sometime soon.
 	 */
-	if (vcpu->scheduled_out && !vcpu_get_flag(vcpu, IN_WFI))
+	if (kvm_vcpu_scheduled_out(vcpu) && !vcpu_get_flag(vcpu, IN_WFI))
 		return;
 
 	if (kvm_is_nested_s2_mmu(vcpu->kvm, vcpu->arch.hw_mmu))

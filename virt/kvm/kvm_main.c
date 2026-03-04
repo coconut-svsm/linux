@@ -4132,7 +4132,7 @@ void kvm_vcpu_on_spin(struct kvm_vcpu *me, bool yield_to_kernel_mode)
 			continue;
 
 		vcpu = xa_load(&kvm->planes[0]->vcpu_array, idx);
-		if (!READ_ONCE(vcpu->ready))
+		if (!kvm_vcpu_ready(vcpu))
 			continue;
 		if (kvm_vcpu_is_blocking(vcpu) && !vcpu_dy_runnable(vcpu))
 			continue;
@@ -4143,7 +4143,7 @@ void kvm_vcpu_on_spin(struct kvm_vcpu *me, bool yield_to_kernel_mode)
 		 * waiting on IPI delivery, i.e. the target vCPU is in-kernel
 		 * for the purposes of directed yield.
 		 */
-		if (READ_ONCE(vcpu->preempted) && yield_to_kernel_mode &&
+		if (kvm_vcpu_preempted(vcpu) && yield_to_kernel_mode &&
 		    !kvm_arch_dy_has_pending_interrupt(vcpu) &&
 		    !kvm_arch_vcpu_preempted_in_kernel(vcpu))
 			continue;
@@ -6513,7 +6513,7 @@ static void kvm_sched_out(struct preempt_notifier *pn,
 
 	WRITE_ONCE(vcpu->scheduled_out, true);
 
-	if (task_is_runnable(current) && vcpu->wants_to_run) {
+	if (task_is_runnable(current) && kvm_vcpu_wants_to_run(vcpu)) {
 		WRITE_ONCE(vcpu->preempted, true);
 		WRITE_ONCE(vcpu->ready, true);
 	}

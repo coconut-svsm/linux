@@ -1847,7 +1847,8 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 	int cpu, idx;
 	unsigned long flags;
 
-	if (vcpu->preempted && kvm_guest_has_pv_feature(vcpu, KVM_FEATURE_PREEMPT)) {
+	if (kvm_vcpu_preempted(vcpu) &&
+	    kvm_guest_has_pv_feature(vcpu, KVM_FEATURE_PREEMPT)) {
 		/*
 		 * Take the srcu lock as memslots will be accessed to check
 		 * the gfn cache generation against the memslots generation.
@@ -1887,7 +1888,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		break;
 	}
 
-	if (!vcpu->wants_to_run)
+	if (!kvm_vcpu_wants_to_run(vcpu))
 		return r;
 
 	/* Clear exit_reason */

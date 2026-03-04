@@ -5168,7 +5168,7 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 
 	kvm_request_l1tf_flush_l1d();
 
-	if (vcpu->scheduled_out && pmu->version && pmu->event_count) {
+	if (kvm_vcpu_scheduled_out(vcpu) && pmu->version && pmu->event_count) {
 		pmu->need_cleanup = true;
 		kvm_make_request(KVM_REQ_PMU, vcpu);
 	}
@@ -5293,7 +5293,7 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 {
 	int idx;
 
-	if (vcpu->preempted) {
+	if (kvm_vcpu_preempted(vcpu)) {
 		/*
 		 * Assume protected guests are in-kernel.  Inefficient yielding
 		 * due to false positives is preferable to never yielding due
@@ -10404,7 +10404,7 @@ static void kvm_sched_yield(struct kvm_vcpu *vcpu, unsigned long dest_id)
 
 	rcu_read_unlock();
 
-	if (!target || !READ_ONCE(target->ready))
+	if (!target || !kvm_vcpu_ready(target))
 		goto no_yield;
 
 	/* Ignore requests to yield to self */
@@ -12041,7 +12041,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 
 	kvm_vcpu_srcu_read_lock(vcpu);
 	if (unlikely(vcpu->arch.mp_state == KVM_MP_STATE_UNINITIALIZED)) {
-		if (!vcpu->wants_to_run) {
+		if (!kvm_vcpu_wants_to_run(vcpu)) {
 			r = -EINTR;
 			goto out;
 		}
@@ -12120,7 +12120,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		WARN_ON_ONCE(vcpu->mmio_needed);
 	}
 
-	if (!vcpu->wants_to_run) {
+	if (!kvm_vcpu_wants_to_run(vcpu)) {
 		r = -EINTR;
 		goto out;
 	}
@@ -13021,7 +13021,7 @@ static void kvm_xstate_reset(struct kvm_vcpu *vcpu, bool init_event)
 	 * only path that can trigger INIT emulation _and_ loads FPU state, and
 	 * KVM_RUN should _always_ load FPU state.
 	 */
-	WARN_ON_ONCE(vcpu->wants_to_run != fpstate->in_use);
+	WARN_ON_ONCE(kvm_vcpu_wants_to_run(vcpu) != fpstate->in_use);
 	fpu_in_use = fpstate->in_use;
 	if (fpu_in_use)
 		kvm_put_guest_fpu(vcpu);
