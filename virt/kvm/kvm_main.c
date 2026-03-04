@@ -466,6 +466,8 @@ static int kvm_vcpu_init_common(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned
 
 	common->vcpu_idx = atomic_read(&kvm->online_vcpus);
 
+	mutex_init(&common->mutex);
+
 	common->kvm = kvm;
 	common->current_vcpu = vcpu;
 
@@ -500,7 +502,6 @@ static void kvm_vcpu_finish_common(struct kvm_vcpu *vcpu)
 
 static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 {
-	mutex_init(&vcpu->mutex);
 	vcpu->cpu = -1;
 	vcpu->kvm = kvm;
 	vcpu->plane = kvm->planes[0];
