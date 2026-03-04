@@ -3176,12 +3176,12 @@ void kvm_s390_gisa_enable(struct kvm *kvm)
 	if (!gisa_desc)
 		return;
 	kvm_for_each_vcpu(i, vcpu, kvm) {
-		mutex_lock(&vcpu->mutex);
+		kvm_vcpu_lock(vcpu);
 		vcpu->arch.sie_block->gd = gisa_desc;
 		vcpu->arch.sie_block->eca |= ECA_AIV;
 		VCPU_EVENT(vcpu, 3, "AIV gisa format-%u enabled for cpu %03u",
 			   vcpu->arch.sie_block->gd & 0x3, vcpu->vcpu_id);
-		mutex_unlock(&vcpu->mutex);
+		kvm_vcpu_unlock(vcpu);
 	}
 }
 
@@ -3212,10 +3212,10 @@ void kvm_s390_gisa_disable(struct kvm *kvm)
 	if (!gi->origin)
 		return;
 	kvm_for_each_vcpu(i, vcpu, kvm) {
-		mutex_lock(&vcpu->mutex);
+		kvm_vcpu_lock(vcpu);
 		vcpu->arch.sie_block->eca &= ~ECA_AIV;
 		vcpu->arch.sie_block->gd = 0U;
-		mutex_unlock(&vcpu->mutex);
+		kvm_vcpu_unlock(vcpu);
 		VCPU_EVENT(vcpu, 3, "AIV disabled for cpu %03u", vcpu->vcpu_id);
 	}
 	kvm_s390_gisa_destroy(kvm);

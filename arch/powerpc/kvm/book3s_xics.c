@@ -1361,9 +1361,9 @@ static void kvmppc_xics_release(struct kvm_device *dev)
 		 * have been cleared and the vcpu will not be going into the
 		 * XICS code anymore.
 		 */
-		mutex_lock(&vcpu->mutex);
+		kvm_vcpu_lock(vcpu);
 		kvmppc_xics_free_icp(vcpu);
-		mutex_unlock(&vcpu->mutex);
+		kvm_vcpu_unlock(vcpu);
 	}
 
 	if (kvm)

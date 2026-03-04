@@ -248,7 +248,7 @@ static bool kvm_sea_target_is_el2(struct kvm_vcpu *vcpu)
 
 int kvm_inject_sea(struct kvm_vcpu *vcpu, bool iabt, u64 addr)
 {
-	lockdep_assert_held(&vcpu->mutex);
+	lockdep_assert_held(kvm_vcpu_mutex(vcpu));
 
 	if (is_nested_ctxt(vcpu) && kvm_sea_target_is_el2(vcpu))
 		return kvm_inject_nested_sea(vcpu, iabt, addr);
@@ -367,7 +367,7 @@ static bool kvm_serror_undeliverable_at_el2(struct kvm_vcpu *vcpu)
 
 int kvm_inject_serror_esr(struct kvm_vcpu *vcpu, u64 esr)
 {
-	lockdep_assert_held(&vcpu->mutex);
+	lockdep_assert_held(kvm_vcpu_mutex(vcpu));
 
 	if (is_nested_ctxt(vcpu) && kvm_serror_target_is_el2(vcpu))
 		return kvm_inject_nested_serror(vcpu, esr);

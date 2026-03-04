@@ -1499,7 +1499,7 @@ int kvm_trylock_all_vcpus(struct kvm *kvm)
 	lockdep_assert_held(&kvm->lock);
 
 	kvm_for_each_vcpu(i, vcpu, kvm)
-		if (!mutex_trylock_nest_lock(&vcpu->mutex, &kvm->lock))
+		if (!mutex_trylock_nest_lock(kvm_vcpu_mutex(vcpu), &kvm->lock))
 			goto out_unlock;
 	return 0;
 
@@ -1507,7 +1507,7 @@ out_unlock:
 	kvm_for_each_vcpu(j, vcpu, kvm) {
 		if (i == j)
 			break;
-		mutex_unlock(&vcpu->mutex);
+		kvm_vcpu_unlock(vcpu);
 	}
 	return -EINTR;
 }
@@ -1522,7 +1522,7 @@ int kvm_lock_all_vcpus(struct kvm *kvm)
 	lockdep_assert_held(&kvm->lock);
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
-		r = mutex_lock_killable_nest_lock(&vcpu->mutex, &kvm->lock);
+		r = mutex_lock_killable_nest_lock(kvm_vcpu_mutex(vcpu), &kvm->lock);
 		if (r)
 			goto out_unlock;
 	}
@@ -1532,7 +1532,7 @@ out_unlock:
 	kvm_for_each_vcpu(j, vcpu, kvm) {
 		if (i == j)
 			break;
-		mutex_unlock(&vcpu->mutex);
+		kvm_vcpu_unlock(vcpu);
 	}
 	return r;
 }
@@ -1546,7 +1546,7 @@ void kvm_unlock_all_vcpus(struct kvm *kvm)
 	lockdep_assert_held(&kvm->lock);
 
 	kvm_for_each_vcpu(i, vcpu, kvm)
-		mutex_unlock(&vcpu->mutex);
+		kvm_vcpu_unlock(vcpu);
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_unlock_all_vcpus);
 
@@ -4353,14 +4353,14 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 	 * vCPU doesn't exist.  As a bonus, taking vcpu->mutex ensures lockdep
 	 * knows it's taken *inside* kvm->lock.
 	 */
-	mutex_lock(&vcpu->mutex);
+	kvm_vcpu_lock(vcpu);
 	kvm_get_kvm(kvm);
 	r = create_vcpu_fd(vcpu);
 	if (r < 0)
 		goto kvm_put_xa_erase;
 
 	kvm_vcpu_finish_common(vcpu);
-	mutex_unlock(&vcpu->mutex);
+	kvm_vcpu_unlock(vcpu);
 
 	mutex_unlock(&kvm->lock);
 	kvm_arch_vcpu_postcreate(vcpu);
@@ -4368,7 +4368,7 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 	return r;
 
 kvm_put_xa_erase:
-	mutex_unlock(&vcpu->mutex);
+	kvm_vcpu_unlock(vcpu);
 	kvm_put_kvm_no_destroy(kvm);
 	xa_erase(&kvm->planes[0]->vcpu_array, vcpu->vcpu_idx);
 unlock_vcpu_destroy:
@@ -4509,10 +4509,10 @@ static int kvm_wait_for_vcpu_online(struct kvm_vcpu *vcpu)
 	 * complete (kvm_vm_ioctl_create_vcpu() holds the mutex until the vCPU
 	 * is fully online).
 	 */
-	if (mutex_lock_killable(&vcpu->mutex))
+	if (mutex_lock_killable(kvm_vcpu_mutex(vcpu)))
 		return -EINTR;
 
-	mutex_unlock(&vcpu->mutex);
+	kvm_vcpu_unlock(vcpu);
 
 	if (WARN_ON_ONCE(!kvm_get_vcpu(kvm, vcpu->vcpu_idx)))
 		return -EIO;
@@ -4552,7 +4552,7 @@ static long kvm_vcpu_ioctl(struct file *filp,
 	if (r != -ENOIOCTLCMD)
 		return r;
 
-	if (mutex_lock_killable(&vcpu->mutex))
+	if (mutex_lock_killable(kvm_vcpu_mutex(vcpu)))
 		return -EINTR;
 	switch (ioctl) {
 	case KVM_RUN: {
@@ -4764,7 +4764,7 @@ out_free1:
 		r = kvm_arch_vcpu_ioctl(filp, ioctl, arg);
 	}
 out:
-	mutex_unlock(&vcpu->mutex);
+	kvm_vcpu_unlock(vcpu);
 	kfree(fpu);
 	kfree(kvm_sregs);
 	return r;

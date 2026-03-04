@@ -1052,9 +1052,9 @@ static void kvmppc_xive_native_release(struct kvm_device *dev)
 		 * be executing the XIVE push or pull code or accessing
 		 * the XIVE MMIO regions.
 		 */
-		mutex_lock(&vcpu->mutex);
+		kvm_vcpu_lock(vcpu);
 		kvmppc_xive_native_cleanup_vcpu(vcpu);
-		mutex_unlock(&vcpu->mutex);
+		kvm_vcpu_unlock(vcpu);
 	}
 
 	/*

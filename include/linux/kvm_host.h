@@ -999,6 +999,21 @@ static inline void kvm_vm_bugged(struct kvm *kvm)
 	unlikely(__ret);					\
 })
 
+static inline void kvm_vcpu_lock(struct kvm_vcpu *vcpu)
+{
+	mutex_lock(&vcpu->mutex);
+}
+
+static inline void kvm_vcpu_unlock(struct kvm_vcpu *vcpu)
+{
+	mutex_unlock(&vcpu->mutex);
+}
+
+static inline struct mutex *kvm_vcpu_mutex(struct kvm_vcpu *vcpu)
+{
+	return &vcpu->mutex;
+}
+
 static inline void kvm_vcpu_srcu_read_lock(struct kvm_vcpu *vcpu)
 {
 #ifdef CONFIG_PROVE_RCU

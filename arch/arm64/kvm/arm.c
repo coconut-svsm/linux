@@ -527,10 +527,10 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 
 #ifdef CONFIG_LOCKDEP
 	/* Inform lockdep that the config_lock is acquired after vcpu->mutex */
-	mutex_lock(&vcpu->mutex);
+	kvm_vcpu_lock(vcpu);
 	mutex_lock(&vcpu->kvm->arch.config_lock);
 	mutex_unlock(&vcpu->kvm->arch.config_lock);
-	mutex_unlock(&vcpu->mutex);
+	kvm_vcpu_unlock(vcpu);
 #endif
 
 	/* Force users to call KVM_ARM_VCPU_INIT */

@@ -33,7 +33,7 @@ EXPORT_SYMBOL_GPL(kvm_s390_pv_is_protected);
 
 bool kvm_s390_pv_cpu_is_protected(struct kvm_vcpu *vcpu)
 {
-	lockdep_assert_held(&vcpu->mutex);
+	lockdep_assert_held(kvm_vcpu_mutex(vcpu));
 	return !!kvm_s390_pv_cpu_get_handle(vcpu);
 }
 EXPORT_SYMBOL_GPL(kvm_s390_pv_cpu_is_protected);
