@@ -322,6 +322,13 @@ struct kvm_mmio_fragment {
 	unsigned int len;
 };
 
+struct kvm_vcpu_common {
+	struct kvm *kvm;
+
+	/* Currently active VCPU */
+	struct kvm_vcpu *current_vcpu;
+};
+
 struct kvm_vcpu {
 	struct kvm *kvm;
 	struct kvm_plane *plane;
@@ -400,6 +407,9 @@ struct kvm_vcpu {
 	 */
 	struct kvm_memory_slot *last_used_slot;
 	u64 last_used_slot_gen;
+
+	struct kvm_vcpu_common *common;
+	unsigned plane_level;
 };
 
 /*
