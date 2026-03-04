@@ -730,7 +730,8 @@ void kvm_vgic_cpu_down(void)
 
 static irqreturn_t vgic_maintenance_handler(int irq, void *data)
 {
-	struct kvm_vcpu *vcpu = *(struct kvm_vcpu **)data;
+	struct kvm_vcpu_common *common = *(struct kvm_vcpu_common **)data;
+	struct kvm_vcpu *vcpu = common->current_vcpu;
 
 	/*
 	 * We cannot rely on the vgic maintenance interrupt to be

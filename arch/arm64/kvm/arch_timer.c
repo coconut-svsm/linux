@@ -204,7 +204,8 @@ static void soft_timer_cancel(struct hrtimer *hrt)
 
 static irqreturn_t kvm_arch_timer_handler(int irq, void *dev_id)
 {
-	struct kvm_vcpu *vcpu = *(struct kvm_vcpu **)dev_id;
+	struct kvm_vcpu_common *common = *(struct kvm_vcpu_common **)dev_id;
+	struct kvm_vcpu *vcpu = common->current_vcpu;
 	struct arch_timer_context *ctx;
 	struct timer_map map;
 

@@ -113,7 +113,7 @@ LIST_HEAD(vm_list);
 static struct kmem_cache *kvm_vcpu_cache;
 
 static __read_mostly struct preempt_ops kvm_preempt_ops;
-static DEFINE_PER_CPU(struct kvm_vcpu *, kvm_running_vcpu);
+static DEFINE_PER_CPU(struct kvm_vcpu_common *, kvm_running_vcpu);
 
 static struct dentry *kvm_debugfs_dir;
 
@@ -165,7 +165,7 @@ void vcpu_load(struct kvm_vcpu *vcpu)
 {
 	int cpu = get_cpu();
 
-	__this_cpu_write(kvm_running_vcpu, vcpu);
+	__this_cpu_write(kvm_running_vcpu, vcpu->common);
 	preempt_notifier_register(&vcpu->preempt_notifier);
 	kvm_arch_vcpu_load(vcpu, cpu);
 	put_cpu();
@@ -3954,7 +3954,7 @@ void __kvm_vcpu_kick(struct kvm_vcpu *vcpu, bool wait)
 	 * kick" check does not need atomic operations if kvm_vcpu_kick is used
 	 * within the vCPU thread itself.
 	 */
-	if (vcpu == __this_cpu_read(kvm_running_vcpu)) {
+	if (vcpu == kvm_get_running_vcpu()) {
 		if (vcpu->mode == IN_GUEST_MODE)
 			WRITE_ONCE(vcpu->mode, EXITING_GUEST_MODE);
 		goto out;
@@ -6500,7 +6500,7 @@ static void kvm_sched_in(struct preempt_notifier *pn, int cpu)
 	WRITE_ONCE(vcpu->preempted, false);
 	WRITE_ONCE(vcpu->ready, false);
 
-	__this_cpu_write(kvm_running_vcpu, vcpu);
+	__this_cpu_write(kvm_running_vcpu, vcpu->common);
 	kvm_arch_vcpu_load(vcpu, cpu);
 
 	WRITE_ONCE(vcpu->scheduled_out, false);
@@ -6532,11 +6532,15 @@ static void kvm_sched_out(struct preempt_notifier *pn,
  */
 struct kvm_vcpu *kvm_get_running_vcpu(void)
 {
-	struct kvm_vcpu *vcpu;
+	struct kvm_vcpu_common *common;
+	struct kvm_vcpu *vcpu = NULL;
 
 	preempt_disable();
-	vcpu = __this_cpu_read(kvm_running_vcpu);
+	common = __this_cpu_read(kvm_running_vcpu);
 	preempt_enable();
+
+	if (common)
+		vcpu = common->current_vcpu;
 
 	return vcpu;
 }
@@ -6545,7 +6549,7 @@ EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_get_running_vcpu);
 /**
  * kvm_get_running_vcpus - get the per-CPU array of currently running vcpus.
  */
-struct kvm_vcpu * __percpu *kvm_get_running_vcpus(void)
+struct kvm_vcpu_common * __percpu *kvm_get_running_vcpus(void)
 {
         return &kvm_running_vcpu;
 }
