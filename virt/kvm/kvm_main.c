@@ -438,6 +438,20 @@ void *kvm_mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc)
 }
 #endif
 
+static int kvm_vcpu_init_common(struct kvm_vcpu *vcpu, struct kvm *kvm)
+{
+	struct kvm_vcpu_common *common = kzalloc(sizeof(*common), GFP_KERNEL_ACCOUNT);
+
+	if (common == NULL)
+		return -ENOMEM;
+
+	common->kvm = kvm;
+	common->current_vcpu = vcpu;
+	vcpu->common = common;
+
+	return 0;
+}
+
 static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 {
 	mutex_init(&vcpu->mutex);
@@ -459,14 +473,26 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	preempt_notifier_init(&vcpu->preempt_notifier, &kvm_preempt_ops);
 	vcpu->last_used_slot = NULL;
 
+	vcpu->plane_level = 0;
+
 	/* Fill the stats id string for the vcpu */
 	snprintf(vcpu->stats_id, sizeof(vcpu->stats_id), "kvm-%d/vcpu-%d",
 		 task_pid_nr(current), id);
 }
 
+static void kvm_vcpu_common_destroy(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->plane_level == 0)
+		kfree(vcpu->common);
+
+	vcpu->common = NULL;
+}
+
 static void kvm_vcpu_destroy(struct kvm_vcpu *vcpu)
 {
 	kvm_arch_vcpu_destroy(vcpu);
+
+	kvm_vcpu_common_destroy(vcpu);
 	kvm_dirty_ring_free(&vcpu->dirty_ring);
 
 	/*
@@ -1360,8 +1386,8 @@ static void kvm_destroy_vm(struct kvm *kvm)
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 	xa_destroy(&kvm->mem_attr_array);
 #endif
-	kvm_arch_free_vm(kvm);
 	kvm_destroy_planes(kvm);
+	kvm_arch_free_vm(kvm);
 	preempt_notifier_dec();
 	kvm_disable_virtualization();
 	mmdrop(mm);
@@ -4246,11 +4272,15 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 		goto vcpu_decrement;
 	}
 
+	r = kvm_vcpu_init_common(vcpu, kvm);
+	if (r)
+		goto vcpu_free;
+
 	BUILD_BUG_ON(sizeof(struct kvm_run) > PAGE_SIZE);
 	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
 	if (!page) {
 		r = -ENOMEM;
-		goto vcpu_free;
+		goto vcpu_free_common;
 	}
 	vcpu->run = page_address(page);
 
@@ -4318,6 +4348,8 @@ arch_vcpu_destroy:
 	kvm_arch_vcpu_destroy(vcpu);
 vcpu_free_run_page:
 	free_page((unsigned long)vcpu->run);
+vcpu_free_common:
+	kvm_vcpu_common_destroy(vcpu);
 vcpu_free:
 	kmem_cache_free(kvm_vcpu_cache, vcpu);
 vcpu_decrement:
