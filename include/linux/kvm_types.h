@@ -46,6 +46,7 @@ struct kvm_plane;
 struct kvm_run;
 struct kvm_userspace_memory_region;
 struct kvm_vcpu;
+struct kvm_vcpu_common;
 struct kvm_vcpu_init;
 struct kvm_memslots;
 
