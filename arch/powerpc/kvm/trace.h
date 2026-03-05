@@ -108,7 +108,7 @@ TRACE_EVENT(kvm_check_requests,
 
 	TP_fast_assign(
 		__entry->cpu_nr		= vcpu->vcpu_id;
-		__entry->requests	= vcpu->requests;
+		__entry->requests	= vcpu->common->requests;
 	),
 
 	TP_printk("vcpu=%x requests=%x",
