@@ -76,6 +76,18 @@ struct kvm_vcpu_stat {
 struct kvm_arch_memory_slot {
 };
 
+/* Per-plane state of VM */
+struct kvm_arch_plane {};
+
+static inline int kvm_arch_plane_init(struct kvm *kvm,
+				      struct kvm_plane *plane,
+				      unsigned plane_level)
+{
+	return 0;
+}
+
+static inline void kvm_arch_plane_destroy(struct kvm_plane *plane) {}
+
 struct kvm_arch {
 	/* G-stage vmid */
 	struct kvm_vmid vmid;

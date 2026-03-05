@@ -638,6 +638,18 @@ struct kvm_s390_pv {
 
 struct kvm_s390_mmu_cache;
 
+/* Per-plane state of VM */
+struct kvm_arch_plane {};
+
+static inline int kvm_arch_plane_init(struct kvm *kvm,
+				      struct kvm_plane *plane,
+				      unsigned plane_level)
+{
+	return 0;
+}
+
+static inline void kvm_arch_plane_destroy(struct kvm_plane *plane) {}
+
 struct kvm_arch {
 	struct esca_block *sca;
 	debug_info_t *dbf;
