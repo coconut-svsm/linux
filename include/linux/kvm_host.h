@@ -337,6 +337,10 @@ struct kvm_vcpu_common {
 #endif
 	struct mutex mutex;
 
+#ifndef __KVM_HAVE_ARCH_WQP
+	struct rcuwait wait;
+#endif
+
 	/* Scheduling state */
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	struct preempt_notifier preempt_notifier;
@@ -361,9 +365,6 @@ struct kvm_vcpu {
 
 	struct kvm_run *run;
 
-#ifndef __KVM_HAVE_ARCH_WQP
-	struct rcuwait wait;
-#endif
 	struct pid *pid;
 	rwlock_t pid_lock;
 	int sigset_active;
@@ -1806,7 +1807,7 @@ static inline struct rcuwait *kvm_arch_vcpu_get_wait(struct kvm_vcpu *vcpu)
 #ifdef __KVM_HAVE_ARCH_WQP
 	return vcpu->arch.waitp;
 #else
-	return &vcpu->wait;
+	return &vcpu->common->wait;
 #endif
 }
 
