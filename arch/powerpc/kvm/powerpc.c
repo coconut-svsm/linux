@@ -98,7 +98,7 @@ int kvmppc_prepare_to_enter(struct kvm_vcpu *vcpu)
 			break;
 		}
 
-		vcpu->mode = IN_GUEST_MODE;
+		kvm_vcpu_set_mode(vcpu, IN_GUEST_MODE);
 
 		/*
 		 * Reading vcpu->requests must happen after setting vcpu->mode,

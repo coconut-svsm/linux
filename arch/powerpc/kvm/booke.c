@@ -823,7 +823,7 @@ int kvmppc_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 
 out:
-	vcpu->mode = OUTSIDE_GUEST_MODE;
+	kvm_vcpu_set_mode(vcpu, OUTSIDE_GUEST_MODE);
 	return ret;
 }
 

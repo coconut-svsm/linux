@@ -574,7 +574,7 @@ static void walk_shadow_page_lockless_begin(struct kvm_vcpu *vcpu)
 		 * Make sure a following spte read is not reordered ahead of the write
 		 * to vcpu->mode.
 		 */
-		smp_store_mb(vcpu->mode, READING_SHADOW_PAGE_TABLES);
+		kvm_vcpu_set_mode_mb(vcpu, READING_SHADOW_PAGE_TABLES);
 	}
 }
 
@@ -588,7 +588,7 @@ static void walk_shadow_page_lockless_end(struct kvm_vcpu *vcpu)
 		 * reads to sptes.  If it does, kvm_mmu_commit_zap_page() can see us
 		 * OUTSIDE_GUEST_MODE and proceed to free the shadow page table.
 		 */
-		smp_store_release(&vcpu->mode, OUTSIDE_GUEST_MODE);
+		kvm_vcpu_set_mode_release(vcpu, OUTSIDE_GUEST_MODE);
 		local_irq_enable();
 	}
 }

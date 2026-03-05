@@ -112,7 +112,7 @@ static inline void kvm_vcpu_trigger_posted_interrupt(struct kvm_vcpu *vcpu,
 						     int pi_vec)
 {
 #ifdef CONFIG_SMP
-	if (vcpu->mode == IN_GUEST_MODE) {
+	if (kvm_vcpu_mode(vcpu) == IN_GUEST_MODE) {
 		/*
 		 * The vector of the virtual has already been set in the PIR.
 		 * Send a notification event to deliver the virtual interrupt

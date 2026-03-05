@@ -200,7 +200,8 @@ static bool kvm_can_use_hv_timer(struct kvm_vcpu *vcpu)
 
 static bool kvm_use_posted_timer_interrupt(struct kvm_vcpu *vcpu)
 {
-	return kvm_can_post_timer_interrupt(vcpu) && vcpu->mode == IN_GUEST_MODE;
+	return kvm_can_post_timer_interrupt(vcpu) &&
+	       kvm_vcpu_mode(vcpu) == IN_GUEST_MODE;
 }
 
 static inline u32 kvm_apic_calc_x2apic_ldr(u32 id)
