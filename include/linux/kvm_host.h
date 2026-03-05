@@ -373,6 +373,8 @@ struct kvm_vcpu_common {
 	bool preempted;
 	bool ready;
 	bool scheduled_out;
+
+	struct kvm_dirty_ring dirty_ring;
 };
 
 struct kvm_vcpu {
@@ -413,7 +415,6 @@ struct kvm_vcpu {
 	struct kvm_vcpu_arch arch;
 	struct kvm_vcpu_stat stat;
 	char stats_id[KVM_STATS_NAME_SIZE];
-	struct kvm_dirty_ring dirty_ring;
 
 	/*
 	 * The most recently used memslot by this vCPU and the slots generation
