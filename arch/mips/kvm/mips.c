@@ -448,7 +448,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 	 * flush request while the requester sees the VCPU as outside of guest
 	 * mode and not needing an IPI.
 	 */
-	smp_store_mb(vcpu->mode, IN_GUEST_MODE);
+	kvm_vcpu_set_mode_mb(vcpu, IN_GUEST_MODE);
 
 	r = kvm_mips_vcpu_enter_exit(vcpu);
 
@@ -1175,7 +1175,7 @@ static int __kvm_mips_handle_exit(struct kvm_vcpu *vcpu)
 	u32 inst;
 	int ret = RESUME_GUEST;
 
-	vcpu->mode = OUTSIDE_GUEST_MODE;
+	kvm_vcpu_set_mode(vcpu, OUTSIDE_GUEST_MODE);
 
 	/* Set a default exit reason */
 	run->exit_reason = KVM_EXIT_UNKNOWN;
@@ -1329,7 +1329,7 @@ static int __kvm_mips_handle_exit(struct kvm_vcpu *vcpu)
 		 * or we could miss a TLB flush request while the requester sees
 		 * the VCPU as outside of guest mode and not needing an IPI.
 		 */
-		smp_store_mb(vcpu->mode, IN_GUEST_MODE);
+		kvm_vcpu_set_mode_mb(vcpu, IN_GUEST_MODE);
 
 		kvm_mips_callbacks->vcpu_reenter(vcpu);
 

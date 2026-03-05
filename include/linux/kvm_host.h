@@ -440,6 +440,31 @@ static inline bool kvm_vcpu_scheduled_out(struct kvm_vcpu *vcpu)
 	return vcpu->common->scheduled_out;
 }
 
+static inline int kvm_vcpu_mode(struct kvm_vcpu *vcpu)
+{
+	return vcpu->mode;
+}
+
+static inline int kvm_vcpu_mode_acquire(struct kvm_vcpu *vcpu)
+{
+	return smp_load_acquire(&vcpu->mode);
+}
+
+static inline void kvm_vcpu_set_mode(struct kvm_vcpu *vcpu, int mode)
+{
+	vcpu->mode = mode;
+}
+
+static inline void kvm_vcpu_set_mode_mb(struct kvm_vcpu *vcpu, int mode)
+{
+	smp_store_mb(vcpu->mode, mode);
+}
+
+static inline void kvm_vcpu_set_mode_release(struct kvm_vcpu *vcpu, int mode)
+{
+	smp_store_release(&vcpu->mode, mode);
+}
+
 /*
  * Start accounting time towards a guest.
  * Must be called before entering guest context.

@@ -301,7 +301,7 @@ static int kvm_pre_enter_guest(struct kvm_vcpu *vcpu)
 		local_irq_disable();
 		kvm_deliver_exception(vcpu);
 		/* Make sure the vcpu mode has been written */
-		smp_store_mb(vcpu->mode, IN_GUEST_MODE);
+		kvm_vcpu_set_mode_mb(vcpu, IN_GUEST_MODE);
 		kvm_deliver_intr(vcpu);
 		kvm_check_vpid(vcpu);
 
@@ -320,7 +320,7 @@ static int kvm_pre_enter_guest(struct kvm_vcpu *vcpu)
 				kvm_make_request(KVM_REQ_PMU, vcpu);
 			}
 			/* make sure the vcpu mode has been written */
-			smp_store_mb(vcpu->mode, OUTSIDE_GUEST_MODE);
+			kvm_vcpu_set_mode_mb(vcpu, OUTSIDE_GUEST_MODE);
 			local_irq_enable();
 			ret = -EAGAIN;
 		}
@@ -339,7 +339,7 @@ static int kvm_handle_exit(struct kvm_run *run, struct kvm_vcpu *vcpu)
 	u32 intr = estat & CSR_ESTAT_IS;
 	u32 ecode = (estat & CSR_ESTAT_EXC) >> CSR_ESTAT_EXC_SHIFT;
 
-	smp_store_mb(vcpu->mode, OUTSIDE_GUEST_MODE);
+	kvm_vcpu_set_mode(vcpu, OUTSIDE_GUEST_MODE);
 
 	/* Set a default exit reason */
 	run->exit_reason = KVM_EXIT_UNKNOWN;

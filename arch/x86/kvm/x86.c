@@ -2248,7 +2248,7 @@ static inline bool kvm_vcpu_exit_request(struct kvm_vcpu *vcpu)
 {
 	xfer_to_guest_mode_prepare();
 
-	return READ_ONCE(vcpu->mode) == EXITING_GUEST_MODE ||
+	return kvm_vcpu_mode(vcpu) == EXITING_GUEST_MODE ||
 	       kvm_request_pending(vcpu) || xfer_to_guest_mode_work_pending();
 }
 
@@ -11331,7 +11331,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	local_irq_disable();
 
 	/* Store vcpu->apicv_active before vcpu->mode.  */
-	smp_store_release(&vcpu->mode, IN_GUEST_MODE);
+	kvm_vcpu_set_mode_release(vcpu, IN_GUEST_MODE);
 
 	kvm_vcpu_srcu_read_unlock(vcpu);
 
@@ -11360,7 +11360,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		kvm_x86_call(sync_pir_to_irr)(vcpu);
 
 	if (kvm_vcpu_exit_request(vcpu)) {
-		vcpu->mode = OUTSIDE_GUEST_MODE;
+		kvm_vcpu_set_mode(vcpu, OUTSIDE_GUEST_MODE);
 		smp_wmb();
 		local_irq_enable();
 		preempt_enable();
@@ -11479,7 +11479,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	vcpu->arch.last_vmentry_cpu = vcpu->cpu;
 	vcpu->arch.last_guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
 
-	vcpu->mode = OUTSIDE_GUEST_MODE;
+	kvm_vcpu_set_mode(vcpu, OUTSIDE_GUEST_MODE);
 	smp_wmb();
 
 	kvm_load_xfeatures(vcpu, false);
