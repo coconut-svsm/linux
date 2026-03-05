@@ -107,6 +107,11 @@ struct kvm_arch {
 	bool mp_state_reset;
 };
 
+struct kvm_vcpu_arch_common {};
+
+static inline int kvm_arch_vcpu_common_init(struct kvm_vcpu_common *common) { return 0; }
+static inline void kvm_arch_vcpu_common_destroy(struct kvm_vcpu_common *common) {}
+
 struct kvm_cpu_trap {
 	unsigned long sepc;
 	unsigned long scause;

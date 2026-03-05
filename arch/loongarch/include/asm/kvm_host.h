@@ -150,6 +150,11 @@ struct kvm_arch {
 	struct loongarch_pch_pic *pch_pic;
 };
 
+struct kvm_vcpu_arch_common {};
+
+static inline int kvm_arch_vcpu_common_init(struct kvm_vcpu_common *common) { return 0; }
+static inline void kvm_arch_vcpu_common_destroy(struct kvm_vcpu_common *common) {}
+
 #define CSR_MAX_NUMS		0x800
 
 struct loongarch_csrs {
