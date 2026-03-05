@@ -1211,13 +1211,22 @@ static struct kvm_plane *kvm_create_plane(struct kvm *kvm, unsigned plane_level)
 
 	xa_init(&plane->vcpu_array);
 
+	if (kvm_arch_plane_init(kvm, plane, plane_level))
+		goto out_free_plane;
+
 	kvm->planes[plane_level] = plane;
 
 	return plane;
+
+out_free_plane:
+	kfree(plane);
+
+	return NULL;
 }
 
 static void kvm_destroy_one_plane(struct kvm_plane *plane)
 {
+	kvm_arch_plane_destroy(plane);
 	kfree(plane);
 }
 
