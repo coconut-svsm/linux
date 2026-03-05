@@ -409,7 +409,7 @@ TRACE_EVENT(name,							     \
 		__entry->guest_rip	= tracing_kvm_rip_read(vcpu);		     \
 		__entry->isa            = isa;				     \
 		__entry->vcpu_id        = vcpu->vcpu_id;		     \
-		__entry->requests       = READ_ONCE(vcpu->requests);	     \
+		__entry->requests       = READ_ONCE(vcpu->common->requests); \
 		kvm_x86_call(get_exit_info)(vcpu,			     \
 					    &__entry->exit_reason,	     \
 					    &__entry->info1,		     \

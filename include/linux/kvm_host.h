@@ -180,7 +180,7 @@ static inline bool kvm_is_error_gpa(gpa_t gpa)
 #define KVM_REQ_OUTSIDE_GUEST_MODE	(KVM_REQUEST_NO_ACTION | KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
 
 #define KVM_ARCH_REQ_FLAGS(nr, flags) ({ \
-	BUILD_BUG_ON((unsigned)(nr) >= (sizeof_field(struct kvm_vcpu, requests) * 8) - KVM_REQUEST_ARCH_BASE); \
+	BUILD_BUG_ON((unsigned)(nr) >= (sizeof_field(struct kvm_vcpu_common, requests) * 8) - KVM_REQUEST_ARCH_BASE); \
 	(unsigned)(((nr) + KVM_REQUEST_ARCH_BASE) | (flags)); \
 })
 #define KVM_ARCH_REQ(nr)           KVM_ARCH_REQ_FLAGS(nr, 0)
@@ -341,6 +341,9 @@ struct kvm_vcpu_common {
 	struct rcuwait wait;
 #endif
 
+	int mode;
+	u64 requests;
+
 	/* Scheduling state */
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	struct preempt_notifier preempt_notifier;
@@ -359,8 +362,6 @@ struct kvm_vcpu {
 	int vcpu_id; /* id given by userspace at creation */
 	int vcpu_idx; /* index into kvm->planes[]->vcpu_array */
 
-	int mode;
-	u64 requests;
 	unsigned long guest_debug;
 
 	struct kvm_run *run;
@@ -442,27 +443,27 @@ static inline bool kvm_vcpu_scheduled_out(struct kvm_vcpu *vcpu)
 
 static inline int kvm_vcpu_mode(struct kvm_vcpu *vcpu)
 {
-	return vcpu->mode;
+	return vcpu->common->mode;
 }
 
 static inline int kvm_vcpu_mode_acquire(struct kvm_vcpu *vcpu)
 {
-	return smp_load_acquire(&vcpu->mode);
+	return smp_load_acquire(&vcpu->common->mode);
 }
 
 static inline void kvm_vcpu_set_mode(struct kvm_vcpu *vcpu, int mode)
 {
-	vcpu->mode = mode;
+	vcpu->common->mode = mode;
 }
 
 static inline void kvm_vcpu_set_mode_mb(struct kvm_vcpu *vcpu, int mode)
 {
-	smp_store_mb(vcpu->mode, mode);
+	smp_store_mb(vcpu->common->mode, mode);
 }
 
 static inline void kvm_vcpu_set_mode_release(struct kvm_vcpu *vcpu, int mode)
 {
-	smp_store_release(&vcpu->mode, mode);
+	smp_store_release(&vcpu->common->mode, mode);
 }
 
 /*
@@ -630,7 +631,7 @@ static inline int kvm_vcpu_exiting_guest_mode(struct kvm_vcpu *vcpu)
 	 * memory barrier following the write of vcpu->mode in VCPU RUN.
 	 */
 	smp_mb__before_atomic();
-	return cmpxchg(&vcpu->mode, IN_GUEST_MODE, EXITING_GUEST_MODE);
+	return cmpxchg(&vcpu->common->mode, IN_GUEST_MODE, EXITING_GUEST_MODE);
 }
 
 /*
@@ -2355,7 +2356,7 @@ static inline void __kvm_make_request(int req, struct kvm_vcpu *vcpu)
 	 * caller.  Paired with the smp_mb__after_atomic in kvm_check_request.
 	 */
 	smp_wmb();
-	set_bit(req & KVM_REQUEST_MASK, (void *)&vcpu->requests);
+	set_bit(req & KVM_REQUEST_MASK, (void *)&vcpu->common->requests);
 }
 
 static __always_inline void kvm_make_request(int req, struct kvm_vcpu *vcpu)
@@ -2381,17 +2382,17 @@ static inline void kvm_make_request_and_kick(int req, struct kvm_vcpu *vcpu)
 
 static inline bool kvm_request_pending(struct kvm_vcpu *vcpu)
 {
-	return READ_ONCE(vcpu->requests);
+	return READ_ONCE(vcpu->common->requests);
 }
 
 static inline bool kvm_test_request(int req, struct kvm_vcpu *vcpu)
 {
-	return test_bit(req & KVM_REQUEST_MASK, (void *)&vcpu->requests);
+	return test_bit(req & KVM_REQUEST_MASK, (void *)&vcpu->common->requests);
 }
 
 static inline void kvm_clear_request(int req, struct kvm_vcpu *vcpu)
 {
-	clear_bit(req & KVM_REQUEST_MASK, (void *)&vcpu->requests);
+	clear_bit(req & KVM_REQUEST_MASK, (void *)&vcpu->common->requests);
 }
 
 static inline bool kvm_check_request(int req, struct kvm_vcpu *vcpu)
