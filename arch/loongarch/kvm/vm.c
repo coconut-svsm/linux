@@ -109,6 +109,11 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kvm->arch.phyid_map = NULL;
 }
 
+unsigned kvm_arch_max_planes(struct kvm *kvm)
+{
+	return 1;
+}
+
 int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 {
 	int r;
