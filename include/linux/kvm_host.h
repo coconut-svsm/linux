@@ -327,6 +327,9 @@ struct kvm_mmio_fragment {
 struct kvm_vcpu_common {
 	struct kvm *kvm;
 
+	/* kvm_run struct shared across all planes */
+	struct kvm_run *run;
+
 	int vcpu_idx; /* index into kvm->planes[]->vcpu_array */
 
 	/* Currently active VCPU */
