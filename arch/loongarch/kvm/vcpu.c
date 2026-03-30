@@ -1231,6 +1231,11 @@ static int kvm_loongarch_vcpu_set_attr(struct kvm_vcpu *vcpu,
 	return ret;
 }
 
+bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl)
+{
+	return false;
+}
+
 long kvm_arch_vcpu_ioctl(struct file *filp,
 			 unsigned int ioctl, unsigned long arg)
 {

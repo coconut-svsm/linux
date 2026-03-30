@@ -538,13 +538,10 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 {
 	vcpu->cpu = -1;
 	vcpu->kvm = kvm;
-	vcpu->plane = kvm->planes[0];
 	vcpu->vcpu_id = id;
 	kvm_async_pf_vcpu_init(vcpu);
 
 	vcpu->last_used_slot = NULL;
-
-	vcpu->plane_level = 0;
 
 	/* Fill the stats id string for the vcpu */
 	snprintf(vcpu->stats_id, sizeof(vcpu->stats_id), "kvm-%d/vcpu-%d",
@@ -4306,9 +4303,13 @@ static struct file_operations kvm_vcpu_fops = {
  */
 static int create_vcpu_fd(struct kvm_vcpu *vcpu)
 {
-	char name[8 + 1 + ITOA_MAX_LEN + 1];
+	char name[14 + 1 + (2 * ITOA_MAX_LEN) + 1];
 
-	snprintf(name, sizeof(name), "kvm-vcpu:%d", vcpu->vcpu_id);
+	if (vcpu->plane_level == 0)
+		snprintf(name, sizeof(name), "kvm-vcpu:%d", vcpu->vcpu_id);
+	else
+		snprintf(name, sizeof(name), "kvm-vcpu-plane%d:%d", vcpu->plane_level, vcpu->vcpu_id);
+
 	return anon_inode_getfd(name, &kvm_vcpu_fops, vcpu, O_RDWR | O_CLOEXEC);
 }
 
@@ -4327,13 +4328,17 @@ DEFINE_SIMPLE_ATTRIBUTE(vcpu_get_pid_fops, vcpu_get_pid, NULL, "%llu\n");
 
 static void kvm_create_vcpu_debugfs(struct kvm_vcpu *vcpu)
 {
+	char dir_name[10 + (2 * ITOA_MAX_LEN) + 1];
 	struct dentry *debugfs_dentry;
-	char dir_name[ITOA_MAX_LEN * 2];
 
 	if (!debugfs_initialized())
 		return;
 
-	snprintf(dir_name, sizeof(dir_name), "vcpu%d", vcpu->vcpu_id);
+	if (vcpu->plane_level == 0)
+		snprintf(dir_name, sizeof(dir_name), "vcpu%d", vcpu->vcpu_id);
+	else
+		snprintf(dir_name, sizeof(dir_name), "vcpu%d-plane%d", vcpu->plane_level, vcpu->vcpu_id);
+
 	debugfs_dentry = debugfs_create_dir(dir_name,
 					    vcpu->kvm->debugfs_dentry);
 	debugfs_create_file("pid", 0444, debugfs_dentry, vcpu,
@@ -4346,10 +4351,11 @@ static void kvm_create_vcpu_debugfs(struct kvm_vcpu *vcpu)
 /*
  * Creates some virtual cpus.  Good luck creating more than one.
  */
-static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
+static int kvm_plane_ioctl_create_vcpu(struct kvm_plane *plane, unsigned long id)
 {
-	int r = -EINVAL;
+	struct kvm *kvm = plane->kvm;
 	struct kvm_vcpu *vcpu;
+	int r;
 
 	mutex_lock(&kvm->lock);
 	if (kvm->created_vcpus >= kvm->max_vcpus) {
@@ -4366,11 +4372,24 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 	if (!vcpu)
 		return -ENOMEM;
 
-	r = kvm_vcpu_init_common(vcpu, kvm, id);
-	if (r)
-		goto vcpu_free;
+	if (plane->level > 0) {
+		struct kvm_vcpu *vcpu_plane0 = kvm_get_vcpu_by_id(kvm, id);
+
+		/* Plane0 VCPU must exist before creating non-plane0 VCPUs */
+		r = -EINVAL;
+		if (vcpu_plane0 == NULL)
+			goto vcpu_free;
+
+		vcpu->common = vcpu_plane0->common;
+	} else {
+		r = kvm_vcpu_init_common(vcpu, kvm, id);
+		if (r)
+			goto vcpu_free;
+	}
 
 	vcpu->vcpu_idx = vcpu->common->vcpu_idx;
+	vcpu->plane = plane;
+	vcpu->plane_level = plane->level;
 	vcpu->run = vcpu->common->run;
 
 	kvm_vcpu_init(vcpu, kvm, id);
@@ -4381,12 +4400,11 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 
 	mutex_lock(&kvm->lock);
 
-	if (kvm_get_vcpu_by_id(kvm, id)) {
-		r = -EEXIST;
+	r = -EEXIST;
+	if (plane_get_vcpu_by_id(plane, id))
 		goto unlock_vcpu_destroy;
-	}
 
-	r = xa_insert(&kvm->planes[0]->vcpu_array, vcpu->vcpu_idx, vcpu, GFP_KERNEL_ACCOUNT);
+	r = xa_insert(&plane->vcpu_array, vcpu->vcpu_idx, vcpu, GFP_KERNEL_ACCOUNT);
 	WARN_ON_ONCE(r == -EBUSY);
 	if (r)
 		goto unlock_vcpu_destroy;
@@ -4416,7 +4434,7 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
 kvm_put_xa_erase:
 	kvm_vcpu_unlock(vcpu);
 	kvm_put_kvm_no_destroy(kvm);
-	xa_erase(&kvm->planes[0]->vcpu_array, vcpu->vcpu_idx);
+	xa_erase(&plane->vcpu_array, vcpu->vcpu_idx);
 unlock_vcpu_destroy:
 	mutex_unlock(&kvm->lock);
 	kvm_arch_vcpu_destroy(vcpu);
@@ -4550,7 +4568,7 @@ static int kvm_wait_for_vcpu_online(struct kvm_vcpu *vcpu)
 
 	/*
 	 * Acquire and release the vCPU's mutex to wait for vCPU creation to
-	 * complete (kvm_vm_ioctl_create_vcpu() holds the mutex until the vCPU
+	 * complete (kvm_plane_ioctl_create_vcpu() holds the mutex until the vCPU
 	 * is fully online).
 	 */
 	if (mutex_lock_killable(kvm_vcpu_mutex(vcpu)))
@@ -4564,6 +4582,22 @@ static int kvm_wait_for_vcpu_online(struct kvm_vcpu *vcpu)
 	return 0;
 }
 
+static inline bool kvm_is_vcpu_plane_ioctl(unsigned ioctl)
+{
+	switch (ioctl) {
+	case KVM_GET_FPU:
+	case KVM_SET_FPU:
+	case KVM_GET_REGS:
+	case KVM_SET_REGS:
+	case KVM_GET_SREGS:
+	case KVM_SET_SREGS:
+	case KVM_TRANSLATE:
+		return true;
+	default:
+		return kvm_arch_is_vcpu_plane_ioctl(ioctl);
+	}
+}
+
 static long kvm_vcpu_ioctl(struct file *filp,
 			   unsigned int ioctl, unsigned long arg)
 {
@@ -4575,6 +4609,9 @@ static long kvm_vcpu_ioctl(struct file *filp,
 
 	if (vcpu->kvm->mm != current->mm || vcpu->kvm->vm_dead)
 		return -EIO;
+
+	if (vcpu->plane_level > 0 && !kvm_is_vcpu_plane_ioctl(ioctl))
+		return -EINVAL;
 
 	if (unlikely(_IOC_TYPE(ioctl) != KVMIO))
 		return -EINVAL;
@@ -4858,6 +4895,21 @@ out:
 }
 #endif
 
+static long __kvm_plane_ioctl(struct kvm_plane *plane, unsigned int ioctl, unsigned long arg)
+{
+	long r;
+
+	switch (ioctl) {
+	case KVM_CREATE_VCPU:
+		r = kvm_plane_ioctl_create_vcpu(plane, arg);
+		break;
+	default:
+		r = -ENOTTY;
+	}
+
+	return r;
+}
+
 static long kvm_plane_ioctl(struct file *filp, unsigned int ioctl,
 			    unsigned long arg)
 {
@@ -4866,10 +4918,7 @@ static long kvm_plane_ioctl(struct file *filp, unsigned int ioctl,
 	if (plane->kvm->mm != current->mm || plane->kvm->vm_dead)
 		return -EIO;
 
-	switch (ioctl) {
-	default:
-		return -ENOTTY;
-	}
+	return __kvm_plane_ioctl(plane, ioctl, arg);
 }
 
 static int kvm_plane_release(struct inode *inode, struct file *filp)
@@ -5396,7 +5445,7 @@ static long kvm_vm_ioctl(struct file *filp,
 		r = kvm_vm_ioctl_create_plane(kvm, arg);
 		break;
 	case KVM_CREATE_VCPU:
-		r = kvm_vm_ioctl_create_vcpu(kvm, arg);
+		r = __kvm_plane_ioctl(kvm->planes[0], ioctl, arg);
 		break;
 	case KVM_ENABLE_CAP: {
 		struct kvm_enable_cap cap;
