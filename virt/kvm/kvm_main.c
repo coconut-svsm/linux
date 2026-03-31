@@ -524,6 +524,8 @@ out_drop_counter:
 
 static void kvm_vcpu_finish_common(struct kvm_vcpu *vcpu)
 {
+	WARN_ON(vcpu->common->vcpus[vcpu->plane_level] != NULL);
+	vcpu->common->vcpus[vcpu->plane_level] = vcpu;
 	smp_wmb();
 	if (vcpu->plane_level == 0) {
 		/*
@@ -555,6 +557,7 @@ static void kvm_vcpu_common_destroy(struct kvm_vcpu *vcpu)
 
 	vcpu->common = NULL;
 	vcpu->run = NULL;
+	common->vcpus[vcpu->plane_level] = NULL;
 
 	if (vcpu->plane_level != 0)
 	       return;
