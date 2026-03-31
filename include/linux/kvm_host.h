@@ -335,6 +335,8 @@ struct kvm_vcpu_common {
 	/* Currently active VCPU */
 	struct kvm_vcpu *current_vcpu;
 
+	struct kvm_vcpu *vcpus[KVM_MAX_PLANES];
+
 	/* Locks */
 	int ____srcu_idx; /* Don't use this directly.  You've been warned. */
 #ifdef CONFIG_PROVE_RCU
@@ -381,6 +383,10 @@ struct kvm_vcpu_common {
 
 	struct kvm_vcpu_arch_common arch;
 };
+
+#define vcpu_for_each_plane(common, i, v)			\
+	for ((i) = 0; (i) < KVM_MAX_PLANES; ++(i))		\
+		if (((v) = common->vcpus[(i)]) != NULL)
 
 struct kvm_vcpu {
 	struct kvm *kvm;
