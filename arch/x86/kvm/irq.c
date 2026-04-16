@@ -226,6 +226,7 @@ int kvm_set_msi(struct kvm_kernel_irq_routing_entry *e,
 		struct kvm *kvm, int irq_source_id, int level, bool line_status)
 {
 	struct kvm_lapic_irq irq;
+	struct kvm_plane *plane;
 
 	if (kvm_msi_route_invalid(kvm, e))
 		return -EINVAL;
@@ -234,8 +235,9 @@ int kvm_set_msi(struct kvm_kernel_irq_routing_entry *e,
 		return -1;
 
 	kvm_msi_to_lapic_irq(kvm, e, &irq);
+	plane = kvm->planes[e->plane_level];
 
-	return kvm_irq_delivery_to_apic(kvm, NULL, &irq);
+	return kvm_irq_delivery_to_apic(plane, NULL, &irq);
 }
 
 int kvm_arch_set_irq_inatomic(struct kvm_kernel_irq_routing_entry *e,
@@ -258,7 +260,7 @@ int kvm_arch_set_irq_inatomic(struct kvm_kernel_irq_routing_entry *e,
 
 		kvm_msi_to_lapic_irq(kvm, e, &irq);
 
-		if (kvm_irq_delivery_to_apic_fast(kvm, NULL, &irq, &r))
+		if (kvm_irq_delivery_to_apic_fast(kvm->planes[e->plane_level], NULL, &irq, &r))
 			return r;
 		break;
 
@@ -451,7 +453,7 @@ static int kvm_pi_update_irte(struct kvm_kernel_irqfd *irqfd,
 		 * if they have a single CPU as the destination, e.g. only if
 		 * the guest has affined the interrupt to a single vCPU.
 		 */
-		if (!kvm_intr_is_single_vcpu(kvm, &irq, &vcpu) ||
+		if (!kvm_intr_is_single_vcpu(kvm->planes[0], &irq, &vcpu) ||
 		    !kvm_irq_is_postable(&irq))
 			vcpu = NULL;
 	}
