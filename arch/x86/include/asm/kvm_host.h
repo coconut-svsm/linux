@@ -1418,16 +1418,17 @@ enum kvm_mmu_type {
 };
 
 /* Per-plane state of VM */
-struct kvm_arch_plane {};
+struct kvm_arch_plane {
+	atomic_t vapics_in_nmi_mode;
 
-static inline int kvm_arch_plane_init(struct kvm *kvm,
-				      struct kvm_plane *plane,
-				      unsigned plane_level)
-{
-	return 0;
-}
+	struct mutex apic_map_lock;
+	struct kvm_apic_map __rcu *apic_map;
+	atomic_t apic_map_dirty;
+};
 
-static inline void kvm_arch_plane_destroy(struct kvm_plane *plane) {}
+int kvm_arch_plane_init(struct kvm *kvm, struct kvm_plane *plane,
+			unsigned plane_level);
+void kvm_arch_plane_destroy(struct kvm_plane *plane);
 
 struct kvm_arch {
 	unsigned long n_used_mmu_pages;
@@ -1465,11 +1466,6 @@ struct kvm_arch {
 	struct kvm_ioapic *vioapic;
 	struct kvm_pit *vpit;
 #endif
-	atomic_t vapics_in_nmi_mode;
-
-	struct mutex apic_map_lock;
-	struct kvm_apic_map __rcu *apic_map;
-	atomic_t apic_map_dirty;
 
 	bool apic_access_memslot_enabled;
 	bool apic_access_memslot_inhibited;
@@ -2458,7 +2454,7 @@ int kvm_cpu_get_extint(struct kvm_vcpu *v);
 int kvm_cpu_get_interrupt(struct kvm_vcpu *v);
 void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event);
 
-int kvm_pv_send_ipi(struct kvm *kvm, unsigned long ipi_bitmap_low,
+int kvm_pv_send_ipi(struct kvm_vcpu *kvm_vcpu, unsigned long ipi_bitmap_low,
 		    unsigned long ipi_bitmap_high, u32 min,
 		    unsigned long icr, int op_64_bit);
 

@@ -10441,7 +10441,7 @@ static void kvm_sched_yield(struct kvm_vcpu *vcpu, unsigned long dest_id)
 		goto no_yield;
 
 	rcu_read_lock();
-	map = rcu_dereference(vcpu->kvm->arch.apic_map);
+	map = rcu_dereference(vcpu->plane->arch.apic_map);
 
 	if (likely(map) && dest_id <= map->max_apic_id) {
 		dest_id = array_index_nospec(dest_id, map->max_apic_id + 1);
@@ -10528,7 +10528,7 @@ int ____kvm_emulate_hypercall(struct kvm_vcpu *vcpu, int cpl,
 		if (!guest_pv_has(vcpu, KVM_FEATURE_PV_SEND_IPI))
 			break;
 
-		ret = kvm_pv_send_ipi(vcpu->kvm, a0, a1, a2, a3, op_64_bit);
+		ret = kvm_pv_send_ipi(vcpu, a0, a1, a2, a3, op_64_bit);
 		break;
 	case KVM_HC_SCHED_YIELD:
 		if (!guest_pv_has(vcpu, KVM_FEATURE_PV_SCHED_YIELD))
@@ -13397,6 +13397,18 @@ void kvm_arch_free_vm(struct kvm *kvm)
 	__kvm_arch_free_vm(kvm);
 }
 
+int kvm_arch_plane_init(struct kvm *kvm, struct kvm_plane *plane,
+			unsigned plane_level)
+{
+	mutex_init(&plane->arch.apic_map_lock);
+
+	return 0;
+}
+
+void kvm_arch_plane_destroy(struct kvm_plane *plane)
+{
+	kvfree(rcu_dereference_check(plane->arch.apic_map, 1));
+}
 
 int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 {
@@ -13429,7 +13441,6 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	atomic_set(&kvm->arch.noncoherent_dma_count, 0);
 
 	raw_spin_lock_init(&kvm->arch.tsc_write_lock);
-	mutex_init(&kvm->arch.apic_map_lock);
 	seqcount_raw_spinlock_init(&kvm->arch.pvclock_sc, &kvm->arch.tsc_write_lock);
 	ratelimit_state_init(&kvm->arch.kvmclock_update_rs, HZ, 10);
 	ratelimit_set_flags(&kvm->arch.kvmclock_update_rs, RATELIMIT_MSG_ON_RELEASE);
@@ -13587,7 +13598,6 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kvm_pic_destroy(kvm);
 	kvm_ioapic_destroy(kvm);
 #endif
-	kvfree(rcu_dereference_check(kvm->arch.apic_map, 1));
 	kfree(srcu_dereference_check(kvm->arch.pmu_event_filter, &kvm->srcu, 1));
 	kvm_mmu_uninit_vm(kvm);
 	kvm_page_track_cleanup(kvm);
