@@ -1646,7 +1646,7 @@ static int mpic_set_default_irq_routing(struct openpic *opp)
 	if (!routing)
 		return -ENOMEM;
 
-	kvm_set_irq_routing(opp->kvm, routing, 0, 0);
+	kvm_set_irq_routing(opp->kvm, routing, 0, 0, 0);
 
 	kfree(routing);
 	return 0;

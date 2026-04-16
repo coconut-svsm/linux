@@ -128,7 +128,8 @@ void kvm_free_irq_routing(struct kvm *kvm)
 static int setup_routing_entry(struct kvm *kvm,
 			       struct kvm_irq_routing_table *rt,
 			       struct kvm_kernel_irq_routing_entry *e,
-			       const struct kvm_irq_routing_entry *ue)
+			       const struct kvm_irq_routing_entry *ue,
+			       unsigned plane_level)
 {
 	struct kvm_kernel_irq_routing_entry *ei;
 	int r;
@@ -146,7 +147,7 @@ static int setup_routing_entry(struct kvm *kvm,
 
 	e->gsi = gsi;
 	e->type = ue->type;
-	e->plane_level = 0;
+	e->plane_level = plane_level;
 	r = kvm_set_routing_entry(kvm, e, ue);
 	if (r)
 		return r;
@@ -170,7 +171,8 @@ bool __weak kvm_arch_can_set_irq_routing(struct kvm *kvm)
 int kvm_set_irq_routing(struct kvm *kvm,
 			const struct kvm_irq_routing_entry *ue,
 			unsigned nr,
-			unsigned flags)
+			unsigned flags,
+			unsigned plane_level)
 {
 	struct kvm_irq_routing_table *new, *old;
 	struct kvm_kernel_irq_routing_entry *e;
@@ -211,7 +213,7 @@ int kvm_set_irq_routing(struct kvm *kvm,
 				goto free_entry;
 			break;
 		}
-		r = setup_routing_entry(kvm, new, e, ue);
+		r = setup_routing_entry(kvm, new, e, ue, plane_level);
 		if (r)
 			goto free_entry;
 		++ue;
