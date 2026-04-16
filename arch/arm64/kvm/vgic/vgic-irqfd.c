@@ -150,7 +150,7 @@ int kvm_vgic_setup_default_irq_routing(struct kvm *kvm)
 		entries[i].u.irqchip.irqchip = 0;
 		entries[i].u.irqchip.pin = i;
 	}
-	ret = kvm_set_irq_routing(kvm, entries, nr, 0);
+	ret = kvm_set_irq_routing(kvm, entries, nr, 0, 0);
 	kfree(entries);
 	return ret;
 }

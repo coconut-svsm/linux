@@ -105,7 +105,7 @@ int kvm_riscv_setup_default_irq_routing(struct kvm *kvm, u32 lines)
 		ents[i].u.irqchip.irqchip = 0;
 		ents[i].u.irqchip.pin = i;
 	}
-	rc = kvm_set_irq_routing(kvm, ents, lines, 0);
+	rc = kvm_set_irq_routing(kvm, ents, lines, 0, 0);
 	kfree(ents);
 
 	return rc;
