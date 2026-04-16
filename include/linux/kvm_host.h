@@ -768,6 +768,7 @@ struct kvm_xen_evtchn {
 struct kvm_kernel_irq_routing_entry {
 	u32 gsi;
 	u32 type;
+	unsigned plane_level;
 	int (*set)(struct kvm_kernel_irq_routing_entry *e,
 		   struct kvm *kvm, int irq_source_id, int level,
 		   bool line_status);
