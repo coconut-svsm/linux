@@ -429,7 +429,7 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 			irq.dest_id = e->fields.dest_id;
 			irq.msi_redir_hint = false;
 			bitmap_zero(vcpu_bitmap, KVM_MAX_VCPUS);
-			kvm_bitmap_or_dest_vcpus(ioapic->kvm, &irq,
+			kvm_bitmap_or_dest_vcpus(ioapic->kvm->planes[0], &irq,
 						 vcpu_bitmap);
 			if (old_dest_mode != e->fields.dest_mode ||
 			    old_dest_id != e->fields.dest_id) {
@@ -442,7 +442,7 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 				irq.dest_mode =
 				    kvm_lapic_irq_dest_mode(
 					!!e->fields.dest_mode);
-				kvm_bitmap_or_dest_vcpus(ioapic->kvm, &irq,
+				kvm_bitmap_or_dest_vcpus(ioapic->kvm->planes[0], &irq,
 							 vcpu_bitmap);
 			}
 			kvm_make_scan_ioapic_request_mask(ioapic->kvm,
@@ -485,11 +485,11 @@ static int ioapic_service(struct kvm_ioapic *ioapic, int irq, bool line_status)
 		 * if rtc_irq_check_coalesced returns false).
 		 */
 		BUG_ON(ioapic->rtc_status.pending_eoi != 0);
-		ret = __kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe,
+		ret = __kvm_irq_delivery_to_apic(ioapic->kvm->planes[0], NULL, &irqe,
 						 &ioapic->rtc_status);
 		ioapic->rtc_status.pending_eoi = (ret < 0 ? 0 : ret);
 	} else
-		ret = kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe);
+		ret = kvm_irq_delivery_to_apic(ioapic->kvm->planes[0], NULL, &irqe);
 
 	if (ret && irqe.trig_mode == IOAPIC_LEVEL_TRIG)
 		entry->fields.remote_irr = 1;
