@@ -363,7 +363,7 @@ void enter_smm(struct kvm_vcpu *vcpu)
 			goto error;
 #endif
 
-	vcpu->arch.cpuid_dynamic_bits_dirty = true;
+	cpuid_set_dirty(vcpu);
 	kvm_mmu_reset_context(vcpu);
 	return;
 error:
