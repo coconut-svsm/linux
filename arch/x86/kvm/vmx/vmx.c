@@ -7994,7 +7994,7 @@ void vmx_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 	 * set if and only if XSAVE is supported.
 	 */
 	if (!guest_cpu_cap_has(vcpu, X86_FEATURE_XSAVE))
-		guest_cpu_cap_clear(vcpu, X86_FEATURE_XSAVES);
+		guest_cpu_cap_clear(vcpu->common, X86_FEATURE_XSAVES);
 
 	vmx_setup_uret_msrs(vmx);
 

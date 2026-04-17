@@ -800,6 +800,23 @@ struct kvm_vcpu_arch_common {
 	struct kvm_cpuid_entry2 *cpuid_entries;
 	bool cpuid_dynamic_bits_dirty;
 	bool is_amd_compatible;
+
+	/*
+	 * cpu_caps holds the effective guest capabilities, i.e. the features
+	 * the vCPU is allowed to use.  Typically, but not always, features can
+	 * be used by the guest if and only if both KVM and userspace want to
+	 * expose the feature to the guest.
+	 *
+	 * A common exception is for virtualization holes, i.e. when KVM can't
+	 * prevent the guest from using a feature, in which case the vCPU "has"
+	 * the feature regardless of what KVM or userspace desires.
+	 *
+	 * Note, features that don't require KVM involvement in any way are
+	 * NOT enforced/sanitized by KVM, i.e. are taken verbatim from the
+	 * guest CPUID provided by userspace.
+	 */
+	u32 cpu_caps[NR_KVM_CPU_CAPS];
+
 };
 
 int kvm_arch_vcpu_common_init(struct kvm_vcpu_common *common);
@@ -924,22 +941,6 @@ struct kvm_vcpu_arch {
 	} interrupt;
 
 	int halt_request; /* real mode on Intel only */
-
-	/*
-	 * cpu_caps holds the effective guest capabilities, i.e. the features
-	 * the vCPU is allowed to use.  Typically, but not always, features can
-	 * be used by the guest if and only if both KVM and userspace want to
-	 * expose the feature to the guest.
-	 *
-	 * A common exception is for virtualization holes, i.e. when KVM can't
-	 * prevent the guest from using a feature, in which case the vCPU "has"
-	 * the feature regardless of what KVM or userspace desires.
-	 *
-	 * Note, features that don't require KVM involvement in any way are
-	 * NOT enforced/sanitized by KVM, i.e. are taken verbatim from the
-	 * guest CPUID provided by userspace.
-	 */
-	u32 cpu_caps[NR_KVM_CPU_CAPS];
 
 	u64 reserved_gpa_bits;
 	int maxphyaddr;
