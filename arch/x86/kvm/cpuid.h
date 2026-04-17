@@ -36,14 +36,18 @@ struct kvm_cpuid_entry2 *kvm_find_cpuid_entry2(struct kvm_cpuid_entry2 *entries,
 static inline struct kvm_cpuid_entry2 *kvm_find_cpuid_entry_index(struct kvm_vcpu *vcpu,
 								  u32 function, u32 index)
 {
-	return kvm_find_cpuid_entry2(vcpu->arch.cpuid_entries, vcpu->arch.cpuid_nent,
+	struct kvm_vcpu_common *common = vcpu->common;
+
+	return kvm_find_cpuid_entry2(common->arch.cpuid_entries, common->arch.cpuid_nent,
 				     function, index);
 }
 
 static inline struct kvm_cpuid_entry2 *kvm_find_cpuid_entry(struct kvm_vcpu *vcpu,
 							    u32 function)
 {
-	return kvm_find_cpuid_entry2(vcpu->arch.cpuid_entries, vcpu->arch.cpuid_nent,
+	struct kvm_vcpu_common *common = vcpu->common;
+
+	return kvm_find_cpuid_entry2(common->arch.cpuid_entries, common->arch.cpuid_nent,
 				     function, KVM_CPUID_INDEX_NOT_SIGNIFICANT);
 }
 
@@ -135,7 +139,7 @@ static __always_inline bool guest_cpuid_has(struct kvm_vcpu *vcpu,
 
 static inline bool guest_cpuid_is_amd_compatible(struct kvm_vcpu *vcpu)
 {
-	return vcpu->arch.is_amd_compatible;
+	return vcpu->common->arch.is_amd_compatible;
 }
 
 static inline bool guest_cpuid_is_intel_compatible(struct kvm_vcpu *vcpu)
@@ -300,4 +304,8 @@ static inline bool guest_has_pred_cmd_msr(struct kvm_vcpu *vcpu)
 		guest_cpu_cap_has(vcpu, X86_FEATURE_SBPB));
 }
 
+static inline void cpuid_set_dirty(struct kvm_vcpu *vcpu)
+{
+	vcpu->common->arch.cpuid_dynamic_bits_dirty = true;
+}
 #endif

@@ -794,10 +794,16 @@ enum kvm_only_cpuid_leafs {
 	NKVMCAPINTS = NR_KVM_CPU_CAPS - NCAPINTS,
 };
 
-struct kvm_vcpu_arch_common {};
+struct kvm_vcpu_arch_common {
+	/* CPUID related state */
+	int cpuid_nent;
+	struct kvm_cpuid_entry2 *cpuid_entries;
+	bool cpuid_dynamic_bits_dirty;
+	bool is_amd_compatible;
+};
 
-static inline int kvm_arch_vcpu_common_init(struct kvm_vcpu_common *common) { return 0; }
-static inline void kvm_arch_vcpu_common_destroy(struct kvm_vcpu_common *common) {}
+int kvm_arch_vcpu_common_init(struct kvm_vcpu_common *common);
+void kvm_arch_vcpu_common_destroy(struct kvm_vcpu_common *common);
 
 struct kvm_vcpu_arch {
 	/*
@@ -918,11 +924,6 @@ struct kvm_vcpu_arch {
 	} interrupt;
 
 	int halt_request; /* real mode on Intel only */
-
-	int cpuid_nent;
-	struct kvm_cpuid_entry2 *cpuid_entries;
-	bool cpuid_dynamic_bits_dirty;
-	bool is_amd_compatible;
 
 	/*
 	 * cpu_caps holds the effective guest capabilities, i.e. the features
