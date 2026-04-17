@@ -284,7 +284,7 @@ static __always_inline void kvm_update_feature_runtime(struct kvm_vcpu *vcpu,
 						       bool has_feature)
 {
 	cpuid_entry_change(entry, x86_feature, has_feature);
-	guest_cpu_cap_change(vcpu, x86_feature, has_feature);
+	guest_cpu_cap_change(vcpu->common, x86_feature, has_feature);
 }
 
 static void kvm_update_cpuid_runtime(struct kvm_vcpu *vcpu)
@@ -382,7 +382,7 @@ void kvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 	bool allow_gbpages;
 	int i;
 
-	memset(vcpu->arch.cpu_caps, 0, sizeof(vcpu->arch.cpu_caps));
+	memset(common->arch.cpu_caps, 0, sizeof(common->arch.cpu_caps));
 	BUILD_BUG_ON(ARRAY_SIZE(reverse_cpuid) != NR_KVM_CPU_CAPS);
 
 	/*
@@ -408,9 +408,9 @@ void kvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 		 * in guest CPUID.  Note, this includes features that are
 		 * supported by KVM but aren't advertised to userspace!
 		 */
-		vcpu->arch.cpu_caps[i] = kvm_cpu_caps[i] |
-					 cpuid_get_reg_unsafe(&emulated, cpuid.reg);
-		vcpu->arch.cpu_caps[i] &= cpuid_get_reg_unsafe(entry, cpuid.reg);
+		common->arch.cpu_caps[i] = kvm_cpu_caps[i] |
+					   cpuid_get_reg_unsafe(&emulated, cpuid.reg);
+		common->arch.cpu_caps[i] &= cpuid_get_reg_unsafe(entry, cpuid.reg);
 	}
 
 	kvm_update_cpuid_runtime(vcpu);
@@ -428,7 +428,7 @@ void kvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 	 */
 	allow_gbpages = tdp_enabled ? boot_cpu_has(X86_FEATURE_GBPAGES) :
 				      guest_cpu_cap_has(vcpu, X86_FEATURE_GBPAGES);
-	guest_cpu_cap_change(vcpu, X86_FEATURE_GBPAGES, allow_gbpages);
+	guest_cpu_cap_change(common, X86_FEATURE_GBPAGES, allow_gbpages);
 
 	best = kvm_find_cpuid_entry(vcpu, 1);
 	if (best && apic) {
@@ -536,8 +536,8 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
 	swap(common->arch.cpuid_entries, e2);
 	swap(common->arch.cpuid_nent, nent);
 
-	memcpy(vcpu_caps, vcpu->arch.cpu_caps, sizeof(vcpu_caps));
-	BUILD_BUG_ON(sizeof(vcpu_caps) != sizeof(vcpu->arch.cpu_caps));
+	memcpy(vcpu_caps, common->arch.cpu_caps, sizeof(vcpu_caps));
+	BUILD_BUG_ON(sizeof(vcpu_caps) != sizeof(common->arch.cpu_caps));
 
 	/*
 	 * KVM does not correctly handle changing guest CPUID after KVM_RUN or
@@ -582,7 +582,7 @@ success:
 	return 0;
 
 err:
-	memcpy(vcpu->arch.cpu_caps, vcpu_caps, sizeof(vcpu_caps));
+	memcpy(common->arch.cpu_caps, vcpu_caps, sizeof(vcpu_caps));
 	swap(common->arch.cpuid_entries, e2);
 	swap(common->arch.cpuid_nent, nent);
 	return r;
