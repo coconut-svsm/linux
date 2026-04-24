@@ -10734,6 +10734,12 @@ static int kvm_check_and_inject_events(struct kvm_vcpu *vcpu,
 			kvm_update_dr7(vcpu);
 		}
 
+		if (vcpu->arch.exception.vector == MC_VECTOR) {
+			r = static_call(kvm_x86_mce_allowed)(vcpu);
+			if (!r)
+				goto out_except;
+		}
+
 		kvm_inject_exception(vcpu);
 
 		vcpu->arch.exception.pending = false;
@@ -10741,6 +10747,7 @@ static int kvm_check_and_inject_events(struct kvm_vcpu *vcpu,
 
 		can_inject = false;
 	}
+out_except:
 
 	/* Don't inject interrupts if the user asked to avoid doing so */
 	if (vcpu->guest_debug & KVM_GUESTDBG_BLOCKIRQ)
