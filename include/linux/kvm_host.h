@@ -1157,6 +1157,8 @@ void vcpu_load(struct kvm_vcpu *vcpu);
 void vcpu_put(struct kvm_vcpu *vcpu);
 
 unsigned kvm_arch_max_planes(struct kvm *kvm);
+struct kvm_plane *kvm_alloc_plane(void);
+void kvm_free_plane(struct kvm_plane *plane);
 
 #ifdef CONFIG_KVM_IOAPIC
 void kvm_arch_post_irq_ack_notifier_list_update(struct kvm *kvm);
