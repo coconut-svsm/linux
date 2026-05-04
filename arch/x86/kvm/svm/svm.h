@@ -110,7 +110,6 @@ struct kvm_sev_info {
 	unsigned long pages_locked; /* Number of pages locked */
 	struct list_head regions_list;  /* List of registered regions */
 	u64 ap_jump_table;	/* SEV-ES AP Jump Table address */
-	u64 vmsa_features;
 	u16 ghcb_version;	/* Highest guest GHCB protocol version allowed */
 	struct kvm *enc_context_owner; /* Owner of copied encryption context */
 	struct list_head mirror_vms; /* List of VMs mirroring */
@@ -138,6 +137,15 @@ struct kvm_svm {
 #ifdef CONFIG_KVM_AMD_SEV
 	struct kvm_sev_info sev_info;
 #endif
+};
+
+struct kvm_sev_info_plane {
+	u64 vmsa_features;
+};
+
+struct kvm_svm_plane {
+	struct kvm_plane plane;
+	struct kvm_sev_info_plane sev_info_plane;
 };
 
 struct kvm_vcpu;
@@ -394,6 +402,16 @@ static __always_inline struct kvm_svm *to_kvm_svm(struct kvm *kvm)
 	return container_of(kvm, struct kvm_svm, kvm);
 }
 
+static __always_inline struct kvm_svm_plane *to_kvm_svm_plane(struct kvm_plane *plane)
+{
+	return container_of(plane, struct kvm_svm_plane, plane);
+}
+
+static __always_inline struct kvm_sev_info_plane *to_kvm_sev_info_plane(struct kvm_plane *plane)
+{
+	return &to_kvm_svm_plane(plane)->sev_info_plane;
+}
+
 #ifdef CONFIG_KVM_AMD_SEV
 static __always_inline struct kvm_sev_info *to_kvm_sev_info(struct kvm *kvm)
 {
@@ -413,7 +431,7 @@ static __always_inline bool ____sev_es_guest(struct kvm *kvm)
 
 static __always_inline bool ____sev_snp_guest(struct kvm *kvm)
 {
-	struct kvm_sev_info *sev = to_kvm_sev_info(kvm);
+	struct kvm_sev_info_plane *sev = to_kvm_sev_info_plane(kvm->planes[0]);
 
 	return (sev->vmsa_features & SVM_SEV_FEAT_SNP_ACTIVE) &&
 	       !WARN_ON_ONCE(!____sev_es_guest(kvm));
@@ -984,7 +1002,7 @@ void sev_snp_cancel_injection(struct kvm_vcpu *vcpu);
 bool sev_snp_blocked(enum inject_type type, struct kvm_vcpu *vcpu);
 static inline bool sev_snp_is_rinj_active(struct kvm_vcpu *vcpu)
 {
-	struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+	struct kvm_sev_info_plane *sev = &to_kvm_svm_plane(vcpu->plane)->sev_info_plane;
 
 	return is_sev_snp_guest(vcpu) &&
 		(sev->vmsa_features & SVM_SEV_FEAT_RESTRICTED_INJECTION);

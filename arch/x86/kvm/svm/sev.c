@@ -204,17 +204,16 @@ static inline bool is_mirroring_enc_context(struct kvm *kvm)
 
 static bool sev_vcpu_has_debug_swap(struct vcpu_svm *svm)
 {
-	struct kvm_vcpu *vcpu = &svm->vcpu;
-	struct kvm_sev_info *sev = to_kvm_sev_info(vcpu->kvm);
+	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(svm->vcpu.plane);
 
-	return sev->vmsa_features & SVM_SEV_FEAT_DEBUG_SWAP;
+	return sev_plane->vmsa_features & SVM_SEV_FEAT_DEBUG_SWAP;
 }
 
 static bool snp_is_secure_tsc_enabled(struct kvm *kvm)
 {
-	struct kvm_sev_info *sev = to_kvm_sev_info(kvm);
+	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(kvm->planes[0]);
 
-	return (sev->vmsa_features & SVM_SEV_FEAT_SECURE_TSC) &&
+	return (sev_plane->vmsa_features & SVM_SEV_FEAT_SECURE_TSC) &&
 	       !WARN_ON_ONCE(!sev_snp_guest(kvm));
 }
 
@@ -496,6 +495,7 @@ static int __sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp,
 			    struct kvm_sev_init *data,
 			    unsigned long vm_type)
 {
+	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(kvm->planes[0]);
 	struct kvm_sev_info *sev = to_kvm_sev_info(kvm);
 	struct sev_platform_init_args init_args = {0};
 	bool es_active = vm_type != KVM_X86_SEV_VM;
@@ -534,11 +534,11 @@ static int __sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp,
 
 	sev->active = true;
 	sev->es_active = es_active;
-	sev->vmsa_features = data->vmsa_features;
+	sev_plane->vmsa_features = data->vmsa_features;
 	sev->ghcb_version = data->ghcb_version;
 
 	if (snp_active)
-		sev->vmsa_features |= SVM_SEV_FEAT_SNP_ACTIVE;
+		sev_plane->vmsa_features |= SVM_SEV_FEAT_SNP_ACTIVE;
 
 	ret = sev_asid_new(sev, vm_type);
 	if (ret)
@@ -576,7 +576,7 @@ e_free_asid:
 	sev_asid_free(sev);
 	sev->asid = 0;
 e_no_asid:
-	sev->vmsa_features = 0;
+	sev_plane->vmsa_features = 0;
 	sev->es_active = false;
 	sev->active = false;
 	return ret;
@@ -931,7 +931,7 @@ e_unpin:
 static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 {
 	struct kvm_vcpu *vcpu = &svm->vcpu;
-	struct kvm_sev_info *sev = to_kvm_sev_info(vcpu->kvm);
+	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(vcpu->plane);
 	struct sev_es_save_area *save = svm->sev_es.vmsa;
 	struct xregs_state *xsave;
 	const u8 *s;
@@ -982,7 +982,7 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	save->xss  = svm->vcpu.arch.ia32_xss;
 	save->dr6  = svm->vcpu.arch.dr6;
 
-	save->sev_features = sev->vmsa_features;
+	save->sev_features = sev_plane->vmsa_features;
 
 	/*
 	 * Skip FPU and AVX setup with KVM_SEV_ES_INIT to avoid
@@ -2026,6 +2026,8 @@ static void sev_unlock_two_vms(struct kvm *dst_kvm, struct kvm *src_kvm)
 
 static void sev_migrate_from(struct kvm *dst_kvm, struct kvm *src_kvm)
 {
+	struct kvm_sev_info_plane *dst_plane = to_kvm_sev_info_plane(dst_kvm->planes[0]);
+	struct kvm_sev_info_plane *src_plane = to_kvm_sev_info_plane(src_kvm->planes[0]);
 	struct kvm_sev_info *dst = to_kvm_sev_info(dst_kvm);
 	struct kvm_sev_info *src = to_kvm_sev_info(src_kvm);
 	struct kvm_vcpu *dst_vcpu, *src_vcpu;
@@ -2039,7 +2041,7 @@ static void sev_migrate_from(struct kvm *dst_kvm, struct kvm *src_kvm)
 	dst->pages_locked = src->pages_locked;
 	dst->enc_context_owner = src->enc_context_owner;
 	dst->es_active = src->es_active;
-	dst->vmsa_features = src->vmsa_features;
+	dst_plane->vmsa_features = src_plane->vmsa_features;
 
 	src->asid = 0;
 	src->active = false;
@@ -4157,7 +4159,7 @@ static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 
 static int sev_snp_ap_creation(struct vcpu_svm *svm)
 {
-	struct kvm_sev_info *sev = to_kvm_sev_info(svm->vcpu.kvm);
+	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(svm->vcpu.plane);
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 	struct kvm_vcpu *target_vcpu;
 	struct vcpu_svm *target_svm;
@@ -4182,9 +4184,9 @@ static int sev_snp_ap_creation(struct vcpu_svm *svm)
 	switch (request) {
 	case SVM_VMGEXIT_AP_CREATE_ON_INIT:
 	case SVM_VMGEXIT_AP_CREATE:
-		if (vcpu->arch.regs[VCPU_REGS_RAX] != sev->vmsa_features) {
+		if (vcpu->arch.regs[VCPU_REGS_RAX] != sev_plane->vmsa_features) {
 			vcpu_unimpl(vcpu, "vmgexit: mismatched AP sev_features [%#lx] != [%#llx] from guest\n",
-				    vcpu->arch.regs[VCPU_REGS_RAX], sev->vmsa_features);
+				    vcpu->arch.regs[VCPU_REGS_RAX], sev_plane->vmsa_features);
 			return -EINVAL;
 		}
 
@@ -4815,15 +4817,16 @@ void sev_vcpu_after_set_cpuid(struct vcpu_svm *svm)
 
 static void sev_snp_init_vmcb(struct vcpu_svm *svm)
 {
-	struct kvm_sev_info *sev = &to_kvm_svm(svm->vcpu.kvm)->sev_info;
+	struct kvm_sev_info_plane *sev_plane = &to_kvm_svm_plane(svm->vcpu.plane)->sev_info_plane;
 
 	/* V_NMI is not supported when Restricted Injection is enabled */
-	if (sev->vmsa_features & SVM_SEV_FEAT_RESTRICTED_INJECTION)
+	if (sev_plane->vmsa_features & SVM_SEV_FEAT_RESTRICTED_INJECTION)
 		svm->vmcb->control.int_ctl &= ~V_NMI_ENABLE_MASK;
 }
 
 static void sev_es_init_vmcb(struct vcpu_svm *svm, bool init_event)
 {
+	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(svm->vcpu.plane);
 	struct kvm_sev_info *sev = to_kvm_sev_info(svm->vcpu.kvm);
 	struct vmcb *vmcb = svm->vmcb01.ptr;
 	struct kvm_vcpu *vcpu = &svm->vcpu;
@@ -4845,7 +4848,7 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm, bool init_event)
 	}
 
 	if (cpu_feature_enabled(X86_FEATURE_ALLOWED_SEV_FEATURES))
-		svm->vmcb->control.allowed_sev_features = sev->vmsa_features |
+		svm->vmcb->control.allowed_sev_features = sev_plane->vmsa_features |
 							  VMCB_ALLOWED_SEV_FEATURES_VALID;
 
 	/* Can't intercept CR register access, HV can't modify CR registers */
