@@ -800,5 +800,6 @@ static inline bool kvm_is_valid_u_s_cet(struct kvm_vcpu *vcpu, u64 data)
 
 struct kvm_plane *x86_alloc_plane(void);
 void x86_free_plane(struct kvm_plane *plane);
+unsigned kvm_x86_default_max_planes(struct kvm *kvm);
 
 #endif

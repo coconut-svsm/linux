@@ -1034,6 +1034,7 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 
 	.alloc_plane = x86_alloc_plane,
 	.free_plane = x86_free_plane,
+	.max_planes = kvm_x86_default_max_planes,
 };
 
 struct kvm_x86_init_ops vt_init_ops __initdata = {

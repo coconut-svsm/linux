@@ -2016,6 +2016,8 @@ struct kvm_x86_ops {
 
 	struct kvm_plane *(*alloc_plane)(void);
 	void (*free_plane)(struct kvm_plane *);
+
+	unsigned (*max_planes)(struct kvm *);
 };
 
 struct kvm_x86_nested_ops {
