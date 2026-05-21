@@ -4250,7 +4250,7 @@ static vm_fault_t kvm_vcpu_fault(struct vm_fault *vmf)
 		page = virt_to_page(vcpu->run);
 #ifdef CONFIG_X86
 	else if (vmf->pgoff == KVM_PIO_PAGE_OFFSET)
-		page = virt_to_page(vcpu->arch.pio_data);
+		page = virt_to_page(vcpu->common->arch.pio_data);
 #endif
 #ifdef CONFIG_KVM_MMIO
 	else if (vmf->pgoff == KVM_COALESCED_MMIO_PAGE_OFFSET)

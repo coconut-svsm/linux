@@ -8532,7 +8532,7 @@ userspace_io:
 }
 
 static int emulator_pio_in(struct kvm_vcpu *vcpu, int size,
-      			   unsigned short port, void *val, unsigned int count)
+			   unsigned short port, void *val, unsigned int count)
 {
 	int r = emulator_pio_in_out(vcpu, size, port, val, count, true);
 	if (r)
@@ -12949,7 +12949,6 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
 
 int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 {
-	struct page *page;
 	int r;
 
 	vcpu->arch.last_vmentry_cpu = -1;
@@ -12973,10 +12972,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 
 	r = -ENOMEM;
 
-	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
-	if (!page)
-		goto fail_free_lapic;
-	vcpu->arch.pio_data = page_address(page);
+	vcpu->arch.pio_data = vcpu->common->arch.pio_data;
 
 	vcpu->arch.mce_banks = kcalloc(KVM_MAX_MCE_BANKS * 4, sizeof(u64),
 				       GFP_KERNEL_ACCOUNT);
@@ -13036,8 +13032,6 @@ free_wbinvd_dirty_mask:
 fail_free_mce_banks:
 	kfree(vcpu->arch.mce_banks);
 	kfree(vcpu->arch.mci_ctl2_banks);
-	free_page((unsigned long)vcpu->arch.pio_data);
-fail_free_lapic:
 	kvm_free_lapic(vcpu);
 fail_mmu_destroy:
 	kvm_mmu_destroy(vcpu);
@@ -13085,16 +13079,24 @@ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
 	idx = srcu_read_lock(&vcpu->kvm->srcu);
 	kvm_mmu_destroy(vcpu);
 	srcu_read_unlock(&vcpu->kvm->srcu, idx);
-	free_page((unsigned long)vcpu->arch.pio_data);
 }
 
 int kvm_arch_vcpu_common_init(struct kvm_vcpu_common *common)
 {
+	struct page *page;
+
+	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+	if (!page)
+		return -ENOMEM;
+
+	common->arch.pio_data = page_address(page);
+
 	return 0;
 }
 
 void kvm_arch_vcpu_common_destroy(struct kvm_vcpu_common *common)
 {
+	free_page((unsigned long)common->arch.pio_data);
 	kvfree(common->arch.cpuid_entries);
 }
 

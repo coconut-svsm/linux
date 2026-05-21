@@ -801,6 +801,8 @@ struct kvm_vcpu_arch_common {
 	bool cpuid_dynamic_bits_dirty;
 	bool is_amd_compatible;
 
+	void *pio_data;
+
 	/*
 	 * cpu_caps holds the effective guest capabilities, i.e. the features
 	 * the vCPU is allowed to use.  Typically, but not always, features can
