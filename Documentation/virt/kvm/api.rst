@@ -56,6 +56,18 @@ be checked with :ref:`KVM_CHECK_EXTENSION <KVM_CHECK_EXTENSION>`.  Some
 capabilities also need to be enabled for VMs or VCPUs where their
 functionality is desired (see :ref:`cap_enable` and :ref:`cap_enable_vm`).
 
+On some architectures, a "virtual privilege level" concept may be present
+apart from the usual separation between user and supervisor mode, or
+between hypervisor and guest mode.  When this is the case, a single vCPU
+can have multiple copies of its register state (or at least most of it),
+and will switch between them through a special processor instruction,
+or through some kind of hypercall.
+
+KVM calls these privilege levels "planes".  Planes other than the
+initially-created one (called "plane 0") have a file descriptor each,
+and so do the planes of each vCPU.  Ioctls for vCPU planes should also
+be issued from a single thread, unless specially marked as asynchronous
+in the documentation.
 
 2. Restrictions
 ===============
@@ -118,6 +130,11 @@ description:
 
   Type:
       system, vm, or vcpu.
+
+      File descriptors for planes other than plane 0 provide a subset
+      of vm and vcpu ioctls.  Those that *are* supported in extra
+      planes are marked specially in the documentation (for example,
+      `vcpu (all planes)`).
 
   Parameters:
       what parameters are accepted by the ioctl.
@@ -309,7 +326,7 @@ the VCPU file descriptor can be mmap-ed, including:
 
 :Capability: basic
 :Architectures: all
-:Type: vm ioctl
+:Type: vm ioctl (all planes)
 :Parameters: vcpu id (apic id on x86)
 :Returns: vcpu fd on success, -1 on error
 
@@ -350,6 +367,8 @@ machines, the resulting vcpu fd can be memory mapped at page offset
 KVM_S390_SIE_PAGE_OFFSET in order to obtain a memory map of the virtual
 cpu's hardware control block.
 
+VCPUs for non-zero planes can only be created if the VCPU the same index has
+already been created for plane zero.
 
 4.8 KVM_GET_DIRTY_LOG
 ---------------------
@@ -421,7 +440,7 @@ kvm_run' (see below).
 
 :Capability: basic
 :Architectures: all except arm64
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_regs (out)
 :Returns: 0 on success, -1 on error
 
@@ -461,7 +480,7 @@ Reads the general purpose registers from the vcpu.
 
 :Capability: basic
 :Architectures: all except arm64
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_regs (in)
 :Returns: 0 on success, -1 on error
 
@@ -475,7 +494,7 @@ See KVM_GET_REGS for the data structure.
 
 :Capability: basic
 :Architectures: x86, ppc
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_sregs (out)
 :Returns: 0 on success, -1 on error
 
@@ -506,7 +525,7 @@ but not yet injected into the cpu core.
 
 :Capability: basic
 :Architectures: x86, ppc
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_sregs (in)
 :Returns: 0 on success, -1 on error
 
@@ -519,7 +538,7 @@ data structures.
 
 :Capability: basic
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_translation (in/out)
 :Returns: 0 on success, -1 on error
 
@@ -645,7 +664,7 @@ This is an asynchronous vcpu ioctl and can be invoked from any thread.
 
 :Capability: basic (vcpu), KVM_CAP_GET_MSR_FEATURES (system)
 :Architectures: x86
-:Type: system ioctl, vcpu ioctl
+:Type: system ioctl, vcpu ioctl (all planes)
 :Parameters: struct kvm_msrs (in/out)
 :Returns: number of msrs successfully returned;
           -1 on error
@@ -685,7 +704,7 @@ kvm will fill in the 'data' member.
 
 :Capability: basic
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_msrs (in)
 :Returns: number of msrs successfully set (see below), -1 on error
 
@@ -773,7 +792,7 @@ signal mask.
 
 :Capability: basic
 :Architectures: x86, loongarch
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_fpu (out)
 :Returns: 0 on success, -1 on error
 
@@ -811,7 +830,7 @@ Reads the floating point state from the vcpu.
 
 :Capability: basic
 :Architectures: x86, loongarch
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_fpu (in)
 :Returns: 0 on success, -1 on error
 
@@ -1128,7 +1147,7 @@ Other flags returned by ``KVM_GET_CLOCK`` are accepted but ignored.
 :Capability: KVM_CAP_VCPU_EVENTS
 :Extended by: KVM_CAP_INTR_SHADOW
 :Architectures: x86, arm64
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_vcpu_events (out)
 :Returns: 0 on success, -1 on error
 
@@ -1254,7 +1273,7 @@ Calling this ioctl on a vCPU that hasn't been initialized will return
 :Capability: KVM_CAP_VCPU_EVENTS
 :Extended by: KVM_CAP_INTR_SHADOW
 :Architectures: x86, arm64
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_vcpu_events (in)
 :Returns: 0 on success, -1 on error
 
@@ -1323,7 +1342,7 @@ Calling this ioctl on a vCPU that hasn't been initialized will return
 
 :Capability: KVM_CAP_DEBUGREGS
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_debugregs (out)
 :Returns: 0 on success, -1 on error
 
@@ -1345,7 +1364,7 @@ Reads debug registers from the vcpu.
 
 :Capability: KVM_CAP_DEBUGREGS
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_debugregs (in)
 :Returns: 0 on success, -1 on error
 
@@ -1662,7 +1681,7 @@ otherwise it will return EBUSY error.
 
 :Capability: KVM_CAP_XSAVE
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_xsave (out)
 :Returns: 0 on success, -1 on error
 
@@ -1682,7 +1701,7 @@ This ioctl would copy current vcpu's xsave struct to the userspace.
 
 :Capability: KVM_CAP_XSAVE and KVM_CAP_XSAVE2
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_xsave (in)
 :Returns: 0 on success, -1 on error
 
@@ -1710,7 +1729,7 @@ contents of CPUID leaf 0xD on the host.
 
 :Capability: KVM_CAP_XCRS
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_xcrs (out)
 :Returns: 0 on success, -1 on error
 
@@ -1737,7 +1756,7 @@ This ioctl would copy current vcpu's xcrs to the userspace.
 
 :Capability: KVM_CAP_XCRS
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_xcrs (in)
 :Returns: 0 on success, -1 on error
 
@@ -1886,11 +1905,21 @@ The flags bitmap is defined as::
 
 :Capability: KVM_CAP_IRQ_ROUTING
 :Architectures: x86 s390 arm64
-:Type: vm ioctl
+:Type: vm ioctl (all planes)
 :Parameters: struct kvm_irq_routing (in)
 :Returns: 0 on success, -1 on error
 
 Sets the GSI routing table entries, overwriting any previously set entries.
+Note that the kernel maintains only one GSI routing table for all planes. The
+plane for which the GSI routing table was set last will receive all interrupts
+signaled through GSI pins. On x86, this also selects the target plane for the
+in-kernel PIC and IOAPIC. The PIC and IOAPIC form a single legacy interrupt
+domain and therefore always target the same plane. The PIT and RTC inherit the
+target plane through their PIC/IOAPIC routes.
+
+Changing the target plane requires all vCPUs to be stopped and no legacy
+interrupt to be in flight. KVM_GET_IRQCHIP and KVM_SET_IRQCHIP transfer device
+state only and do not get or set the target plane.
 
 On arm64, GSI routing has the following limitation:
 
@@ -2040,7 +2069,7 @@ error.
 
 :Capability: KVM_CAP_IRQCHIP
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_lapic_state (out)
 :Returns: 0 on success, -1 on error
 
@@ -2071,7 +2100,7 @@ always uses xAPIC format.
 
 :Capability: KVM_CAP_IRQCHIP
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_lapic_state (in)
 :Returns: 0 on success, -1 on error
 
@@ -2305,7 +2334,7 @@ prior to calling the KVM_RUN ioctl.
 
 :Capability: KVM_CAP_ONE_REG
 :Architectures: all
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_one_reg (in)
 :Returns: 0 on success, negative value on failure
 
@@ -2930,7 +2959,7 @@ Following are the KVM-defined registers for x86:
 
 :Capability: KVM_CAP_ONE_REG
 :Architectures: all
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_one_reg (in and out)
 :Returns: 0 on success, negative value on failure
 
@@ -2984,7 +3013,7 @@ after pausing the vcpu, but before it is resumed.
 
 :Capability: KVM_CAP_SIGNAL_MSI
 :Architectures: x86 arm64
-:Type: vm ioctl
+:Type: vm ioctl (all planes)
 :Parameters: struct kvm_msi (in)
 :Returns: >0 on delivery, 0 if guest blocked the MSI, and -1 on error
 
@@ -3180,7 +3209,7 @@ into the hash PTE second double word).
 
 :Capability: KVM_CAP_IRQFD
 :Architectures: x86 s390 arm64
-:Type: vm ioctl
+:Type: vm or plane ioctl
 :Parameters: struct kvm_irqfd (in)
 :Returns: 0 on success, -1 on error
 
@@ -3204,6 +3233,19 @@ the interrupt if the device making use of it still requires service.
 Note that closing the resamplefd is not sufficient to disable the
 irqfd.  The KVM_IRQFD_FLAG_RESAMPLE is only necessary on assignment
 and need not be specified with KVM_IRQFD_FLAG_DEASSIGN.
+
+For virtual machines with planes, issuing KVM_IRQFD on the VM fd targets plane
+0.  KVM_IRQFD can instead be issued on a plane fd to target that plane.  If the
+GSI has an MSI routing entry, the irqfd's plane selects the destination for
+both software injection and IRQ bypass, independently of the plane associated
+with the VM's GSI routing table.  This allows MSI and MSI-X interrupts to
+target different planes from IRQCHIP-routed GSIs, and from one another.  The
+irqfd must be deassigned through the same VM or plane fd on which it was
+assigned.
+
+For non-MSI routing entries, the interrupt continues to target the plane that
+owns the VM-wide GSI routing table.  KVM maintains one GSI routing table per VM,
+so IRQCHIP-routed GSIs cannot target different planes at the same time.
 
 On arm64, gsi routing being supported, the following can happen:
 
@@ -3605,7 +3647,7 @@ VCPU matching underlying host.
 
 :Capability: basic
 :Architectures: arm64, mips, riscv, x86 (if KVM_CAP_ONE_REG)
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_reg_list (in/out)
 :Returns: 0 on success; -1 on error
 
@@ -4904,7 +4946,7 @@ The acceptable values for the flags field are::
 
 :Capability: KVM_CAP_NESTED_STATE
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_nested_state (in/out)
 :Returns: 0 on success, -1 on error
 
@@ -4990,7 +5032,7 @@ to the KVM_CHECK_EXTENSION ioctl().
 
 :Capability: KVM_CAP_NESTED_STATE
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_nested_state (in)
 :Returns: 0 on success, -1 on error
 
@@ -5871,7 +5913,7 @@ then ``length`` is returned.
 
 :Capability: KVM_CAP_SREGS2
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_sregs2 (out)
 :Returns: 0 on success, -1 on error
 
@@ -5904,7 +5946,7 @@ flags values for ``kvm_sregs2``:
 
 :Capability: KVM_CAP_SREGS2
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_sregs2 (in)
 :Returns: 0 on success, -1 on error
 
@@ -6120,7 +6162,7 @@ as the descriptors in Descriptors block.
 
 :Capability: KVM_CAP_XSAVE2
 :Architectures: x86
-:Type: vcpu ioctl
+:Type: vcpu ioctl (all planes)
 :Parameters: struct kvm_xsave (out)
 :Returns: 0 on success, -1 on error
 
@@ -6567,6 +6609,39 @@ KVM_S390_KEYOP_SSKE
   specified in ``key``, returning the previous value in ``key``.
 
 .. _kvm_run:
+
+.. _KVM_CREATE_PLANE:
+
+4.145 KVM_CREATE_PLANE
+----------------------
+
+:Capability: KVM_CAP_PLANES
+:Architectures: none
+:Type: vm ioctl
+:Parameters: plane id
+:Returns: a VM fd that can be used to control the new plane.
+
+Creates a new *plane*, i.e. a separate privilege level for the virtual machine.
+
+On x86, an in-kernel interrupt controller must be enabled before creating a
+nonzero plane. Both KVM_CREATE_IRQCHIP and KVM_CAP_SPLIT_IRQCHIP are supported.
+For KVM_CREATE_IRQCHIP, userspace creates the IRQ chip first, creates the
+additional planes, and installs the GSI routing table through the fd of the
+plane that will receive legacy interrupts.
+
+The fd used for KVM_IRQFD selects the target plane for assigned-device MSI and
+MSI-X interrupts.  Using the VM fd targets plane 0; using a plane fd targets
+that plane.  This selection is independent of the routing-table plane, so
+assigned-device MSIs and IRQCHIP-routed GSIs can target different planes.  An
+irqfd must be deassigned through the same fd on which it was assigned before it
+can be assigned to another plane.
+
+Each plane has a numeric id that is used when communicating with KVM.  While
+KVM is currently agnostic to whether low ids are more or less privileged, it is
+expected that this will not always be the case in the future.  For example KVM
+in the future may use the plane id when planes are supported by hardware (as is
+the case for VMPLs in AMD), or if KVM supports accelerated plane switch
+operations (as might be the case for Hyper-V VTLs).
 
 5. The kvm_run structure
 ========================
