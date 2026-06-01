@@ -5478,6 +5478,10 @@ static int kvm_vm_ioctl_create_plane(struct kvm *kvm, unsigned id)
 	    WARN_ON_ONCE(id >= KVM_MAX_PLANES))
 		return -EINVAL;
 
+	/* Planes are only supported with in-kernel IRQ-chip */
+	if (!kvm_arch_irqchip_in_kernel(kvm))
+		return -EINVAL;
+
 	guard(mutex)(&kvm->lock);
 	if (kvm->planes[id])
 		return -EEXIST;
@@ -5499,6 +5503,7 @@ static int kvm_vm_ioctl_create_plane(struct kvm *kvm, unsigned id)
 		goto put_kvm;
 	}
 
+	kvm->has_planes = true;
 	fd_install(fd, file);
 	return fd;
 

@@ -918,6 +918,7 @@ struct kvm {
 	struct list_head gpc_list;
 
 	struct kvm_plane *planes[KVM_MAX_PLANES];
+	bool has_planes;
 
 	/*
 	 * created_vcpus is protected by kvm->lock, and is incremented
