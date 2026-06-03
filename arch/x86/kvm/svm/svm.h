@@ -254,9 +254,29 @@ struct svm_nested_state {
 	bool force_msr_bitmap_recalc;
 };
 
+enum vmsa_state {
+	/* No VMSA set */
+	VMSA_NONE,
+	/* VMSA allocated by KVM - Shared in RMP (if applicable) */
+	VMSA_SHARED,
+	/* VMSA allocated by KVM - Guest-private in RMP (SEV-SNP only) */
+	VMSA_PRIVATE,
+	/* Guest-owned VMSA */
+	VMSA_GUEST,
+};
+
+struct sev_es_vmsa_state {
+	enum vmsa_state vmsa_state;
+	union {
+		/* state == (KVM_SHARED || KVM_PRIVATE) */
+		struct page *vmsa_page;
+		/* state == GUEST */
+		gpa_t vmsa_gpa;
+	};
+};
+
 struct vcpu_sev_es_state {
 	/* SEV-ES support */
-	struct sev_es_save_area *vmsa;
 	struct ghcb *ghcb;
 	u8 valid_bitmap[16];
 	struct kvm_host_map ghcb_map;
@@ -280,11 +300,14 @@ struct vcpu_sev_es_state {
 
 	u64 ghcb_registered_gpa;
 
-	struct mutex snp_vmsa_mutex; /* Used to handle concurrent updates of VMSA. */
-	gpa_t snp_vmsa_gpa;
+
+	/* VMSA related state */
+	struct mutex snp_vmsa_mutex;	/* Used to handle concurrent updates of VMSA. */
+	struct sev_es_vmsa_state vmsa;	/* VMSA currently used by the VCPU */
+	gpa_t req_vmsa_gpa;		/* Requested new VMSA GPA */
+
 	bool snp_ap_runnable;
 	bool snp_ap_waiting_for_reset;
-	bool snp_has_guest_vmsa;
 
 	gpa_t hvdb_gpa;
 };

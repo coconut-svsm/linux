@@ -157,6 +157,9 @@ static bool sev_snp_guest(struct kvm *kvm)
 }
 
 static int snp_decommission_context(struct kvm *kvm);
+static int kvm_rmp_make_shared(struct kvm *kvm, u64 pfn, enum pg_level level);
+static void sev_flush_encrypted_page(struct kvm_vcpu *vcpu, void *va);
+static int snp_page_reclaim(struct kvm *kvm, u64 pfn);
 
 struct enc_region {
 	struct list_head list;
@@ -165,6 +168,173 @@ struct enc_region {
 	unsigned long uaddr;
 	unsigned long size;
 };
+
+static void *sev_es_vmsa_ref(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	void *vmsa = NULL;
+
+	if (svm->sev_es.vmsa.vmsa_state == VMSA_SHARED) {
+		vmsa = page_address(svm->sev_es.vmsa.vmsa_page);
+	}
+
+	return vmsa;
+}
+
+static int sev_es_vcpu_alloc_vmsa(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct page *vmsa_page;
+
+	if (svm->sev_es.vmsa.vmsa_state != VMSA_NONE)
+		return -EINVAL;
+
+	/*
+	 * SEV-ES guests require a separate (from the VMCB) VMSA page used to
+	 * contain the encrypted register state of the guest.
+	 */
+	vmsa_page = snp_safe_alloc_page();
+	if (!vmsa_page)
+		return -ENOMEM;
+
+	svm->sev_es.vmsa.vmsa_state = VMSA_SHARED;
+	svm->sev_es.vmsa.vmsa_page = vmsa_page;
+
+	return 0;
+}
+
+static int sev_es_vcpu_vmsa_make_private(struct kvm_vcpu *vcpu)
+{
+	struct kvm_sev_info *sev = to_kvm_sev_info(vcpu->kvm);
+	struct vcpu_svm *svm = to_svm(vcpu);
+	void *vmsa = sev_es_vmsa_ref(vcpu);
+
+	if (!vmsa)
+		return -EINVAL;
+
+	if (is_sev_snp_guest(vcpu)) {
+		u64 pfn = __pa(vmsa) >> PAGE_SHIFT;
+		int ret;
+
+		/* Transition the VMSA page to a firmware state. */
+		ret = rmp_make_private(pfn, INITIAL_VMSA_GPA, PG_LEVEL_4K, sev->asid, true);
+		if (ret)
+			return ret;
+	}
+
+	svm->sev_es.vmsa.vmsa_state = VMSA_PRIVATE;
+
+	return 0;
+}
+
+static void sev_es_vcpu_free_vmsa(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	void *vmsa_ptr;
+
+	switch (svm->sev_es.vmsa.vmsa_state) {
+	case VMSA_NONE:
+	case VMSA_GUEST:
+		break;
+	case VMSA_PRIVATE:
+		vmsa_ptr = page_address(svm->sev_es.vmsa.vmsa_page);
+
+		if (is_sev_snp_guest(vcpu)) {
+			u64 pfn = __pa(vmsa_ptr) >> PAGE_SHIFT;
+
+			if (kvm_rmp_make_shared(vcpu->kvm, pfn, PG_LEVEL_4K)) {
+				pr_err("Failed to make VMSA page shared - leaking it to avoid re-use\n");
+				goto out;
+			}
+		}
+
+		if (vcpu->arch.guest_state_protected)
+			sev_flush_encrypted_page(vcpu, vmsa_ptr);
+
+		fallthrough;
+	case VMSA_SHARED:
+		__free_page(svm->sev_es.vmsa.vmsa_page);
+		break;
+	default:
+		BUG();
+	}
+out:
+
+	svm->sev_es.vmsa.vmsa_page = NULL;
+	svm->sev_es.vmsa.vmsa_state = VMSA_NONE;
+}
+
+static void sev_snp_vcpu_reclaim_vmsa(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	void *vmsa_ptr;
+	u64 pfn;
+
+	if (WARN_ON_ONCE(!is_sev_snp_guest(vcpu) ||
+	                 svm->sev_es.vmsa.vmsa_state != VMSA_PRIVATE))
+		return;
+
+	vmsa_ptr = page_address(svm->sev_es.vmsa.vmsa_page);
+	pfn = __pa(vmsa_ptr) >> PAGE_SHIFT;
+
+	if (!snp_page_reclaim(vcpu->kvm, pfn))
+		__free_page(svm->sev_es.vmsa.vmsa_page);
+
+	svm->sev_es.vmsa.vmsa_page = NULL;
+	svm->sev_es.vmsa.vmsa_state = VMSA_NONE;
+}
+
+static void sev_es_set_guest_vmsa(struct kvm_vcpu *vcpu, gpa_t vmsa_gpa)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	sev_es_vcpu_free_vmsa(vcpu);
+
+	svm->sev_es.vmsa.vmsa_state = VMSA_GUEST;
+	svm->sev_es.vmsa.vmsa_gpa = vmsa_gpa;
+}
+
+static u64 sev_es_vmsa_pa(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	enum vmsa_state vmsa_state = svm->sev_es.vmsa.vmsa_state;
+	u64 vmsa_pa = INVALID_PAGE;
+
+	if (vmsa_state == VMSA_GUEST) {
+		gpa_t vmsa_gpa = svm->sev_es.vmsa.vmsa_gpa;
+		struct kvm_memory_slot *slot;
+		struct page *page;
+		kvm_pfn_t pfn;
+		gfn_t gfn;
+
+		gfn = gpa_to_gfn(vmsa_gpa);
+
+		slot = gfn_to_memslot(vcpu->kvm, gfn);
+		if (!slot)
+			goto out;
+
+		/*
+		 * The new VMSA will be private memory guest memory, so retrieve the
+		 * PFN from the gmem backend.
+		 */
+		if (kvm_gmem_get_pfn(vcpu->kvm, slot, gfn, &pfn, &page, NULL))
+			goto out;
+
+		vmsa_pa = pfn_to_hpa(pfn);
+
+		/*
+		 * gmem pages aren't currently migratable, but if this ever changes
+		 * then care should be taken to ensure the guest vmsa is pinned
+		 * through some other means.
+		 */
+		kvm_release_page_clean(page);
+	} else if (vmsa_state == VMSA_PRIVATE || vmsa_state == VMSA_SHARED) {
+		vmsa_pa = __pa(page_address(svm->sev_es.vmsa.vmsa_page));
+	}
+
+out:
+	return vmsa_pa;
+}
 
 /* Called with the sev_bitmap_lock held, or on shutdown  */
 static int sev_flush_asids(unsigned int min_asid, unsigned int max_asid)
@@ -935,7 +1105,7 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 {
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(vcpu->plane);
-	struct sev_es_save_area *save = svm->sev_es.vmsa;
+	struct sev_es_save_area *save = sev_es_vmsa_ref(vcpu);
 	struct xregs_state *xsave;
 	const u8 *s;
 	u8 *d;
@@ -1036,6 +1206,7 @@ static int __sev_launch_update_vmsa(struct kvm *kvm, struct kvm_vcpu *vcpu,
 {
 	struct sev_data_launch_update_vmsa vmsa;
 	struct vcpu_svm *svm = to_svm(vcpu);
+	void *vmsa_ref = sev_es_vmsa_ref(vcpu);
 	int ret;
 
 	if (vcpu->guest_debug) {
@@ -1053,15 +1224,19 @@ static int __sev_launch_update_vmsa(struct kvm *kvm, struct kvm_vcpu *vcpu,
 	 * the VMSA memory content (i.e it will write the same memory region
 	 * with the guest's key), so invalidate it first.
 	 */
-	clflush_cache_range(svm->sev_es.vmsa, PAGE_SIZE);
+	clflush_cache_range(vmsa_ref, PAGE_SIZE);
 
 	vmsa.reserved = 0;
 	vmsa.handle = to_kvm_sev_info(kvm)->handle;
-	vmsa.address = __sme_pa(svm->sev_es.vmsa);
+	vmsa.address = __sme_pa(vmsa_ref);
 	vmsa.len = PAGE_SIZE;
 	ret = sev_issue_cmd(kvm, SEV_CMD_LAUNCH_UPDATE_VMSA, &vmsa, error);
 	if (ret)
-	  return ret;
+		goto free_vmsa;
+
+	ret = sev_es_vcpu_vmsa_make_private(vcpu);
+	if (ret)
+		goto free_vmsa;
 
 	/*
 	 * SEV-ES guests maintain an encrypted version of their FPU
@@ -1079,7 +1254,13 @@ static int __sev_launch_update_vmsa(struct kvm *kvm, struct kvm_vcpu *vcpu,
 	 * MSR_IA32_DEBUGCTLMSR when guest_state_protected is not set.
 	 */
 	svm_enable_lbrv(vcpu);
+
 	return 0;
+
+free_vmsa:
+	sev_es_vcpu_free_vmsa(vcpu);
+
+	return ret;
 }
 
 static int sev_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
@@ -2520,23 +2701,22 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		struct vcpu_svm *svm = to_svm(vcpu);
-		u64 pfn = __pa(svm->sev_es.vmsa) >> PAGE_SHIFT;
+		void *vmsa = sev_es_vmsa_ref(vcpu);
 
 		ret = sev_es_sync_vmsa(svm);
 		if (ret)
 			goto out;
 
-		/* Transition the VMSA page to a firmware state. */
-		ret = rmp_make_private(pfn, INITIAL_VMSA_GPA, PG_LEVEL_4K, sev->asid, true);
+		ret = sev_es_vcpu_vmsa_make_private(vcpu);
 		if (ret)
 			goto out;
 
 		/* Issue the SNP command to encrypt the VMSA */
-		data.address = __sme_pa(svm->sev_es.vmsa);
+		data.address = __sme_pa(vmsa);
 		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
 				      &data, &argp->error);
 		if (ret) {
-			snp_page_reclaim(kvm, pfn);
+			sev_snp_vcpu_reclaim_vmsa(vcpu);
 
 			goto out;
 		}
@@ -3637,31 +3817,13 @@ void sev_es_unmap_ghcb(struct vcpu_svm *svm)
 
 void sev_free_vcpu(struct kvm_vcpu *vcpu)
 {
-	struct vcpu_svm *svm;
+	struct vcpu_svm *svm = to_svm(vcpu);
 
 	if (!is_sev_es_guest(vcpu))
 		return;
 
-	svm = to_svm(vcpu);
+	sev_es_vcpu_free_vmsa(vcpu);
 
-	/*
-	 * If it's an SNP guest, then the VMSA was marked in the RMP table as
-	 * a guest-owned page. Transition the page to hypervisor state before
-	 * releasing it back to the system.
-	 */
-	if (is_sev_snp_guest(vcpu)) {
-		u64 pfn = __pa(svm->sev_es.vmsa) >> PAGE_SHIFT;
-
-		if (kvm_rmp_make_shared(vcpu->kvm, pfn, PG_LEVEL_4K))
-			goto skip_vmsa_free;
-	}
-
-	if (vcpu->arch.guest_state_protected)
-		sev_flush_encrypted_page(vcpu, svm->sev_es.vmsa);
-
-	__free_page(virt_to_page(svm->sev_es.vmsa));
-
-skip_vmsa_free:
 	__sev_es_unmap_ghcb(svm);
 }
 
@@ -4111,10 +4273,7 @@ static int snp_begin_psc(struct vcpu_svm *svm)
 static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	struct kvm_memory_slot *slot;
-	struct page *page;
-	kvm_pfn_t pfn;
-	gfn_t gfn;
+	u64 vmsa_pa;
 
 	guard(mutex)(&svm->sev_es.snp_vmsa_mutex);
 
@@ -4136,36 +4295,14 @@ static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 	 */
 	vmcb_mark_all_dirty(svm->vmcb);
 
-	if (!VALID_PAGE(svm->sev_es.snp_vmsa_gpa))
+	sev_es_set_guest_vmsa(vcpu, svm->sev_es.req_vmsa_gpa);
+	vmsa_pa = sev_es_vmsa_pa(vcpu);
+
+	if (!VALID_PAGE(vmsa_pa))
 		return;
-
-	gfn = gpa_to_gfn(svm->sev_es.snp_vmsa_gpa);
-	svm->sev_es.snp_vmsa_gpa = INVALID_PAGE;
-
-	slot = gfn_to_memslot(vcpu->kvm, gfn);
-	if (!slot)
-		return;
-
-	/*
-	 * The new VMSA will be private memory guest memory, so retrieve the
-	 * PFN from the gmem backend.
-	 */
-	if (kvm_gmem_get_pfn(vcpu->kvm, slot, gfn, &pfn, &page, NULL))
-		return;
-
-	/*
-	 * From this point forward, the VMSA will always be a guest-mapped page
-	 * rather than the initial one allocated by KVM in svm->sev_es.vmsa. In
-	 * theory, svm->sev_es.vmsa could be free'd and cleaned up here, but
-	 * that involves cleanups like flushing caches, which would ideally be
-	 * handled during teardown rather than guest boot.  Deferring that also
-	 * allows the existing logic for SEV-ES VMSAs to be re-used with
-	 * minimal SNP-specific changes.
-	 */
-	svm->sev_es.snp_has_guest_vmsa = true;
 
 	/* Use the new VMSA */
-	svm->vmcb->control.vmsa_pa = pfn_to_hpa(pfn);
+	svm->vmcb->control.vmsa_pa = vmsa_pa;
 
 	/*
 	 * The vCPU may not have gone through the LAUNCH_UPDATE process, so mark
@@ -4187,13 +4324,6 @@ static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 	} else {
 		kvm_set_mp_state(vcpu, KVM_MP_STATE_UNINITIALIZED);
 	}
-
-	/*
-	 * gmem pages aren't currently migratable, but if this ever changes
-	 * then care should be taken to ensure svm->sev_es.vmsa is pinned
-	 * through some other means.
-	 */
-	kvm_release_page_clean(page);
 }
 
 static unsigned int get_ap_creation_request(struct vcpu_svm *svm)
@@ -4300,10 +4430,10 @@ static int sev_snp_ap_creation(struct kvm_vcpu *vcpu)
 			return -EINVAL;
 		}
 
-		target_svm->sev_es.snp_vmsa_gpa = svm->vmcb->control.exit_info_2;
+		target_svm->sev_es.req_vmsa_gpa = svm->vmcb->control.exit_info_2;
 		break;
 	case SVM_VMGEXIT_AP_DESTROY:
-		target_svm->sev_es.snp_vmsa_gpa = INVALID_PAGE;
+		target_svm->sev_es.req_vmsa_gpa = INVALID_PAGE;
 		break;
 	default:
 		vcpu_unimpl(vcpu, "vmgexit: invalid AP creation request [%#x] from guest\n",
@@ -5066,20 +5196,7 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm, bool init_event)
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 
 	svm->vmcb->control.misc_ctl |= SVM_MISC_ENABLE_SEV_ES;
-
-	/*
-	 * An SEV-ES guest requires a VMSA area that is a separate from the
-	 * VMCB page. Do not include the encryption mask on the VMSA physical
-	 * address since hardware will access it using the guest key.  Note,
-	 * the VMSA will be NULL if this vCPU is the destination for intrahost
-	 * migration, and will be copied later.
-	 */
-	if (!svm->sev_es.snp_has_guest_vmsa) {
-		if (svm->sev_es.vmsa)
-			svm->vmcb->control.vmsa_pa = __pa(svm->sev_es.vmsa);
-		else
-			svm->vmcb->control.vmsa_pa = INVALID_PAGE;
-	}
+	svm->vmcb->control.vmsa_pa = sev_es_vmsa_pa(&svm->vcpu);
 
 	if (cpu_feature_enabled(X86_FEATURE_ALLOWED_SEV_FEATURES))
 		svm->vmcb->control.allowed_sev_features = sev_plane->vmsa_features |
@@ -5157,7 +5274,7 @@ void sev_init_vmcb(struct vcpu_svm *svm, bool init_event)
 int sev_vcpu_create(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	struct page *vmsa_page;
+	int ret;
 
 	mutex_init(&svm->sev_es.snp_vmsa_mutex);
 
@@ -5168,11 +5285,9 @@ int sev_vcpu_create(struct kvm_vcpu *vcpu)
 	 * SEV-ES guests require a separate (from the VMCB) VMSA page used to
 	 * contain the encrypted register state of the guest.
 	 */
-	vmsa_page = snp_safe_alloc_page();
-	if (!vmsa_page)
-		return -ENOMEM;
-
-	svm->sev_es.vmsa = page_address(vmsa_page);
+	ret = sev_es_vcpu_alloc_vmsa(vcpu);
+	if (ret)
+		return ret;
 
 	vcpu->arch.guest_tsc_protected = snp_is_secure_tsc_enabled(vcpu->kvm);
 
@@ -5587,12 +5702,14 @@ struct vmcb_save_area *sev_decrypt_vmsa(struct kvm_vcpu *vcpu)
 	if (!is_sev_es_guest(vcpu))
 		return NULL;
 
+	vmsa = sev_es_vmsa_ref(vcpu);
+
 	/*
 	 * If the VMSA has not yet been encrypted, return a pointer to the
 	 * current un-encrypted VMSA.
 	 */
-	if (!vcpu->arch.guest_state_protected)
-		return (struct vmcb_save_area *)svm->sev_es.vmsa;
+	if (vmsa)
+		return vmsa;
 
 	sev = to_kvm_sev_info(vcpu->kvm);
 
@@ -5663,8 +5780,10 @@ struct vmcb_save_area *sev_decrypt_vmsa(struct kvm_vcpu *vcpu)
 
 void sev_free_decrypted_vmsa(struct kvm_vcpu *vcpu, struct vmcb_save_area *vmsa)
 {
+	struct vmcb_save_area *vmsa_ptr = sev_es_vmsa_ref(vcpu);
+
 	/* If the VMSA has not yet been encrypted, nothing was allocated */
-	if (!vcpu->arch.guest_state_protected || !vmsa)
+	if (vmsa == vmsa_ptr)
 		return;
 
 	free_page((unsigned long)vmsa);
