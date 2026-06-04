@@ -2532,6 +2532,20 @@ e_free_context:
 	return rc;
 }
 
+static bool snp_check_launch_vmsa(struct kvm_sev_info_plane *sev_plane,
+				  struct sev_es_save_area *vmsa)
+{
+	/* VMSA sev_features must match VMs vmsa_features */
+	if (vmsa->sev_features != sev_plane->vmsa_features)
+		return false;
+
+	/* Must always boot from VMPL0 */
+	if (vmsa->vmpl != 0)
+		return false;
+
+	return true;
+}
+
 struct sev_gmem_populate_args {
 	__u8 type;
 	int sev_fd;
@@ -2541,9 +2555,11 @@ struct sev_gmem_populate_args {
 static int sev_gmem_post_populate(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
 				  struct page *src_page, void *opaque)
 {
+	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(kvm->planes[0]);
 	struct sev_gmem_populate_args *sev_populate_args = opaque;
 	struct sev_data_snp_launch_update fw_args = {0};
 	struct kvm_sev_info *sev = to_kvm_sev_info(kvm);
+	gpa_t gpa = gfn << PAGE_SHIFT;
 	bool assigned = false;
 	int level;
 	int ret;
@@ -2562,14 +2578,24 @@ static int sev_gmem_post_populate(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
 	if (src_page) {
 		void *src_vaddr = kmap_local_page(src_page);
 		void *dst_vaddr = kmap_local_pfn(pfn);
+		struct sev_es_save_area *vmsa = dst_vaddr;
+		bool accept_page = true;
 
 		memcpy(dst_vaddr, src_vaddr, PAGE_SIZE);
 
-		kunmap_local(src_vaddr);
+		if (sev_populate_args->type == KVM_SEV_SNP_PAGE_TYPE_VMSA)
+			accept_page = snp_check_launch_vmsa(sev_plane, vmsa);
+
 		kunmap_local(dst_vaddr);
+		kunmap_local(src_vaddr);
+
+		if (!accept_page) {
+			ret = -EINVAL;
+			goto out;
+		}
 	}
 
-	ret = rmp_make_private(pfn, gfn << PAGE_SHIFT, PG_LEVEL_4K,
+	ret = rmp_make_private(pfn, gpa, PG_LEVEL_4K,
 			       sev_get_asid(kvm), true);
 	if (ret)
 		goto out;
@@ -2605,6 +2631,9 @@ static int sev_gmem_post_populate(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
 		kunmap_local(dst_vaddr);
 	}
 
+	if (ret == 0 && sev_populate_args->type == KVM_SEV_SNP_PAGE_TYPE_VMSA)
+		sev->initial_vmsa_gpa = gpa;
+
 out:
 	if (ret)
 		pr_debug("%s: error updating GFN %llx, return code %d (fw_error %d)\n",
@@ -2632,11 +2661,21 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	if (!params.len || !PAGE_ALIGNED(params.len) || params.flags ||
 	    (params.type != KVM_SEV_SNP_PAGE_TYPE_NORMAL &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_VMSA &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_ZERO &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_UNMEASURED &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_SECRETS &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_CPUID))
 		return -EINVAL;
+
+	if (params.type == KVM_SEV_SNP_PAGE_TYPE_VMSA) {
+		/* VMSA page are allowed only once */
+		if (sev->initial_vmsa_gpa != INVALID_PAGE)
+			return -EBUSY;
+		/* Can only deploy a single page as VMSA */
+		if (params.len != PAGE_SIZE)
+			return -EINVAL;
+	}
 
 	src = params.type == KVM_SEV_SNP_PAGE_TYPE_ZERO ? NULL : u64_to_user_ptr(params.uaddr);
 
