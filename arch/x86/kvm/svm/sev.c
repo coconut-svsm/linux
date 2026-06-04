@@ -736,6 +736,7 @@ static int __sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp,
 
 	INIT_LIST_HEAD(&sev->regions_list);
 	INIT_LIST_HEAD(&sev->mirror_vms);
+	sev->initial_vmsa_gpa = INVALID_PAGE;
 	sev->need_init = false;
 
 	kvm_set_apicv_inhibit(kvm, APICV_INHIBIT_REASON_SEV);
@@ -2692,6 +2693,46 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	return 0;
 }
 
+static int snp_init_guest_vmsa(struct kvm_vcpu *vcpu, gpa_t vmsa_gpa)
+{
+	/* Only one initial guest VMSA can exist (per IGVM) - so it belongs to the BSP */
+	if (vcpu->vcpu_idx != 0)
+		return 0;
+
+	/* VMSA already private and encrypted via LAUNCH_UPDATE */
+	sev_es_set_guest_vmsa(vcpu, vmsa_gpa);
+
+	return 0;
+}
+
+static int snp_init_kvm_vmsa(struct kvm_vcpu *vcpu,
+			     struct sev_data_snp_launch_update *data,
+			     struct kvm_sev_cmd *argp)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	int ret;
+	void *vmsa;
+
+	ret = sev_es_sync_vmsa(svm);
+	if (ret)
+		return ret;
+
+	vmsa = sev_es_vmsa_ref(vcpu);
+
+	ret = sev_es_vcpu_vmsa_make_private(vcpu);
+	if (ret)
+		return ret;
+
+	/* Issue the SNP command to encrypt the VMSA */
+	data->address = __sme_pa(vmsa);
+	ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
+			      data, &argp->error);
+	if (ret)
+		sev_snp_vcpu_reclaim_vmsa(vcpu);
+
+	return ret;
+}
+
 static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
 	struct kvm_sev_info *sev = to_kvm_sev_info(kvm);
@@ -2712,27 +2753,12 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		struct vcpu_svm *svm = to_svm(vcpu);
-		void *vmsa;
 
-		ret = sev_es_sync_vmsa(svm);
+		ret = VALID_PAGE(sev->initial_vmsa_gpa) ?
+			snp_init_guest_vmsa(vcpu, sev->initial_vmsa_gpa) :
+			snp_init_kvm_vmsa(vcpu, &data, argp);
 		if (ret)
 			goto out;
-
-		vmsa = sev_es_vmsa_ref(vcpu);
-
-		ret = sev_es_vcpu_vmsa_make_private(vcpu);
-		if (ret)
-			goto out;
-
-		/* Issue the SNP command to encrypt the VMSA */
-		data.address = __sme_pa(vmsa);
-		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
-				      &data, &argp->error);
-		if (ret) {
-			sev_snp_vcpu_reclaim_vmsa(vcpu);
-
-			goto out;
-		}
 
 		svm->vcpu.arch.guest_state_protected = true;
 
