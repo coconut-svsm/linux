@@ -1105,11 +1105,11 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 {
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(vcpu->plane);
-	struct sev_es_save_area *save = sev_es_vmsa_ref(vcpu);
+	struct sev_es_save_area *save;
 	struct xregs_state *xsave;
 	const u8 *s;
+	int ret, i;
 	u8 *d;
-	int i;
 
 	lockdep_assert_held(kvm_vcpu_mutex(vcpu));
 
@@ -1119,6 +1119,12 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	/* Check some debug related fields before encrypting the VMSA */
 	if (svm->vcpu.guest_debug || (svm->vmcb->save.dr7 & ~DR7_FIXED_1))
 		return -EINVAL;
+
+	ret = sev_es_vcpu_alloc_vmsa(vcpu);
+	if (ret)
+		return ret;
+
+	save = sev_es_vmsa_ref(vcpu);
 
 	/*
 	 * SEV-ES will use a VMSA that is pointed to by the VMCB, not
@@ -1206,7 +1212,7 @@ static int __sev_launch_update_vmsa(struct kvm *kvm, struct kvm_vcpu *vcpu,
 {
 	struct sev_data_launch_update_vmsa vmsa;
 	struct vcpu_svm *svm = to_svm(vcpu);
-	void *vmsa_ref = sev_es_vmsa_ref(vcpu);
+	void *vmsa_ref;
 	int ret;
 
 	if (vcpu->guest_debug) {
@@ -1218,6 +1224,8 @@ static int __sev_launch_update_vmsa(struct kvm *kvm, struct kvm_vcpu *vcpu,
 	ret = sev_es_sync_vmsa(svm);
 	if (ret)
 		return ret;
+
+	vmsa_ref = sev_es_vmsa_ref(vcpu);
 
 	/*
 	 * The LAUNCH_UPDATE_VMSA command will perform in-place encryption of
@@ -1246,6 +1254,9 @@ static int __sev_launch_update_vmsa(struct kvm *kvm, struct kvm_vcpu *vcpu,
 	 */
 	fpstate_set_confidential(&vcpu->arch.guest_fpu);
 	vcpu->arch.guest_state_protected = true;
+
+	/* VMSA encrypted - put it into the VMCB */
+	svm->vmcb->control.vmsa_pa = sev_es_vmsa_pa(vcpu);
 
 	/*
 	 * SEV-ES guest mandates LBR Virtualization to be _always_ ON. Enable it
@@ -2701,11 +2712,13 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		struct vcpu_svm *svm = to_svm(vcpu);
-		void *vmsa = sev_es_vmsa_ref(vcpu);
+		void *vmsa;
 
 		ret = sev_es_sync_vmsa(svm);
 		if (ret)
 			goto out;
+
+		vmsa = sev_es_vmsa_ref(vcpu);
 
 		ret = sev_es_vcpu_vmsa_make_private(vcpu);
 		if (ret)
@@ -2722,6 +2735,10 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		}
 
 		svm->vcpu.arch.guest_state_protected = true;
+
+		/* VMSA encrypted - put it into the VMCB */
+		svm->vmcb->control.vmsa_pa = sev_es_vmsa_pa(vcpu);
+
 		/*
 		 * SEV-ES (and thus SNP) guest mandates LBR Virtualization to
 		 * be _always_ ON. Enable it only after setting
@@ -5274,22 +5291,11 @@ void sev_init_vmcb(struct vcpu_svm *svm, bool init_event)
 int sev_vcpu_create(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	int ret;
 
 	mutex_init(&svm->sev_es.snp_vmsa_mutex);
 
-	if (!is_sev_es_guest(vcpu))
-		return 0;
-
-	/*
-	 * SEV-ES guests require a separate (from the VMCB) VMSA page used to
-	 * contain the encrypted register state of the guest.
-	 */
-	ret = sev_es_vcpu_alloc_vmsa(vcpu);
-	if (ret)
-		return ret;
-
-	vcpu->arch.guest_tsc_protected = snp_is_secure_tsc_enabled(vcpu->kvm);
+	if (is_sev_es_guest(vcpu))
+		vcpu->arch.guest_tsc_protected = snp_is_secure_tsc_enabled(vcpu->kvm);
 
 	return 0;
 }
