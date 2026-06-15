@@ -12208,7 +12208,20 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu_plane0)
 	int ret;
 
 	do {
-		struct kvm_vcpu *vcpu = kvm_vcpu_select_plane(vcpu_plane0, true);
+		struct kvm_vcpu *last_vcpu, *vcpu;
+		bool activate;
+
+		last_vcpu = common->current_vcpu;
+
+		/*
+		 * Is there still work to do for the old plane before the new can run?
+		 */
+		activate = last_vcpu->arch.complete_userspace_io == NULL;
+		vcpu = kvm_vcpu_select_plane(vcpu_plane0, activate);
+		if (!activate && last_vcpu != vcpu) {
+			kvm_make_request(KVM_REQ_PLANE_RESCHED, last_vcpu);
+			vcpu = last_vcpu;
+		}
 
 		if (vcpu == NULL)
 			return -EINVAL;
