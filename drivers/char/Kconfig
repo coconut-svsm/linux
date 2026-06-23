@@ -397,4 +397,14 @@ config ADI
 	  and SSM (Silicon Secured Memory).  Intended consumers of this
 	  driver include crash and makedumpfile.
 
+config OCP_SVSM
+	tristate "SNP SVSM OCP interface"
+	depends on AMD_MEM_ENCRYPT
+	default m
+	help
+	  This is a driver for the AMD SVSM	OCP protocol that a SEV-SNP guest
+	  OS can use to retrieve or configure state information of the Secure
+	  VM Service Module (SVSM) in the guest context. To compile this
+	  driver, choose M here.
+
 endmenu
