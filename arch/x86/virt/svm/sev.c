@@ -527,6 +527,9 @@ void snp_prepare(void)
 
 	cpus_read_lock();
 
+	/* Required on SEV firmwares < 1.55 build 32 */
+	wbinvd_on_all_cpus();
+
 	/*
 	 * MtrrFixDramModEn is not shared between threads on a core,
 	 * therefore it must be set on all CPUs prior to enabling SNP.
