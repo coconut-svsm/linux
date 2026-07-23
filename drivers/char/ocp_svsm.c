@@ -9,6 +9,8 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 #include <linux/platform_device.h>
+#include <uapi/linux/ocp_svsm.h>
+#include <asm/sev.h>
 
 #define OCP_CLASS "ocp"
 #define OCP_DEVICE "ocp"
@@ -35,9 +37,145 @@ static int ocp_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static long ocp_ioctl_list_objects(char *buffer, void __user *argp)
+{
+	struct ocp_svsm_list_objects list_objects;
+	int ret = 0;
+	u32 value_moved = 0;
+
+	if (copy_from_user(&list_objects, argp, sizeof(list_objects)))
+		return -EFAULT;
+
+	if (list_objects.buf_size > OCP_MAX_BUFFER_SIZE) {
+		return -EINVAL;
+	}
+
+	ret = snp_svsm_ocp_list_objects(buffer, list_objects.first_entry,
+					list_objects.buf_size, &value_moved);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(u64_to_user_ptr(list_objects.buf_ptr), buffer,
+			 value_moved))
+		return -EFAULT;
+
+	return value_moved;
+}
+
+static long ocp_ioctl_list_object_sources(char *buffer, void __user *argp)
+{
+	struct ocp_svsm_list_object_sources list_sources;
+	int ret = 0;
+	u32 value_moved = 0;
+
+	if (copy_from_user(&list_sources, argp, sizeof(list_sources)))
+		return -EFAULT;
+
+	if (list_sources.buf_size > OCP_MAX_BUFFER_SIZE) {
+		return -EINVAL;
+	}
+
+	ret = snp_svsm_ocp_list_object_sources(
+		buffer, list_sources.object_index, list_sources.first_entry,
+		list_sources.buf_size, &value_moved);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(u64_to_user_ptr(list_sources.buf_ptr), buffer,
+			 value_moved))
+		return -EFAULT;
+
+	return value_moved;
+}
+
+static long ocp_ioctl_read_source(char *buffer, void __user *argp)
+{
+	struct ocp_svsm_read_source read_source;
+	int ret = 0;
+	u32 value_moved = 0;
+
+	if (copy_from_user(&read_source, argp, sizeof(read_source)))
+		return -EFAULT;
+
+	if (read_source.bytes_to_read > OCP_MAX_BUFFER_SIZE) {
+		return -EINVAL;
+	}
+
+	ret = snp_svsm_ocp_read_source(buffer, read_source.object_index,
+				       read_source.source_index,
+				       read_source.bytes_to_read,
+				       read_source.offset, &value_moved);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(u64_to_user_ptr(read_source.buf_ptr), buffer,
+			 value_moved))
+		return -EFAULT;
+
+	return value_moved;
+}
+
+static long ocp_ioctl_write_source(char *buffer, void __user *argp)
+{
+	struct ocp_svsm_write_source write_source;
+	int ret = 0;
+	u32 value_moved = 0;
+
+	if (copy_from_user(&write_source, argp, sizeof(write_source)))
+		return -EFAULT;
+
+	if (write_source.bytes_to_write > OCP_MAX_BUFFER_SIZE) {
+		return -EINVAL;
+	}
+
+	if (copy_from_user(buffer, u64_to_user_ptr(write_source.buf_ptr),
+			   write_source.bytes_to_write))
+		return -EFAULT;
+
+	ret = snp_svsm_ocp_write_source(buffer, write_source.object_index,
+					write_source.source_index,
+					write_source.bytes_to_write,
+					write_source.offset, &value_moved);
+	if (ret)
+		return ret;
+
+	return value_moved;
+}
+
+static long ocp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct ocp_dev *ocp = file->private_data;
+	void __user *argp = (void __user *)arg;
+	int ret = 0;
+
+	mutex_lock(&ocp->buffer_mutex);
+
+	switch (cmd) {
+	case OCP_SVSM_IOCTL_LIST_OBJECTS:
+		ret = ocp_ioctl_list_objects(ocp->buffer, argp);
+		break;
+	case OCP_SVSM_IOCTL_LIST_OBJECT_SOURCES:
+		ret = ocp_ioctl_list_object_sources(ocp->buffer, argp);
+		break;
+	case OCP_SVSM_IOCTL_READ_SOURCE:
+		ret = ocp_ioctl_read_source(ocp->buffer, argp);
+		break;
+	case OCP_SVSM_IOCTL_WRITE_SOURCE:
+		ret = ocp_ioctl_write_source(ocp->buffer, argp);
+		break;
+	default:
+		ret = -ENOTTY;
+		break;
+	}
+
+	mutex_unlock(&ocp->buffer_mutex);
+	return ret;
+}
+
 static const struct file_operations ocp_fops = {
 	.owner = THIS_MODULE,
 	.open = ocp_open,
+	.unlocked_ioctl = ocp_ioctl,
 };
 
 static int __init ocp_svsm_probe(struct platform_device *pdev)
