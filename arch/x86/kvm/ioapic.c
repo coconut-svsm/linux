@@ -35,7 +35,7 @@
 #include "trace.h"
 
 static int ioapic_service(struct kvm_ioapic *vioapic, int irq,
-		bool line_status);
+			  bool line_status);
 
 static unsigned long ioapic_read_indirect(struct kvm_ioapic *ioapic)
 {
@@ -74,6 +74,11 @@ static unsigned long ioapic_read_indirect(struct kvm_ioapic *ioapic)
 	return result;
 }
 
+static inline struct kvm_plane *ioapic_plane(struct kvm_ioapic *ioapic)
+{
+	return ioapic->kvm->planes[READ_ONCE(ioapic->plane_level)];
+}
+
 static void rtc_irq_eoi_tracking_reset(struct kvm_ioapic *ioapic)
 {
 	ioapic->rtc_status.pending_eoi = 0;
@@ -94,6 +99,9 @@ static void __rtc_irq_eoi_tracking_restore_one(struct kvm_vcpu *vcpu)
 	struct kvm_ioapic *ioapic = vcpu->kvm->arch.vioapic;
 	struct rtc_status *status = &ioapic->rtc_status;
 	union kvm_ioapic_redirect_entry *e;
+
+	if (vcpu->plane_level != READ_ONCE(ioapic->plane_level))
+		return;
 
 	e = &ioapic->redirtbl[RTC_GSI];
 	if (!kvm_apic_match_dest(vcpu, NULL, APIC_DEST_NOSHORT,
@@ -136,8 +144,8 @@ static void kvm_rtc_eoi_tracking_restore_all(struct kvm_ioapic *ioapic)
 		return;
 
 	rtc_irq_eoi_tracking_reset(ioapic);
-	kvm_for_each_vcpu(i, vcpu, ioapic->kvm)
-	    __rtc_irq_eoi_tracking_restore_one(vcpu);
+	plane_for_each_vcpu(i, vcpu, ioapic_plane(ioapic))
+		__rtc_irq_eoi_tracking_restore_one(vcpu);
 }
 
 static void rtc_irq_eoi(struct kvm_ioapic *ioapic, struct kvm_vcpu *vcpu,
@@ -168,7 +176,7 @@ static void ioapic_lazy_update_eoi(struct kvm_ioapic *ioapic, int irq)
 	struct kvm_vcpu *vcpu;
 	union kvm_ioapic_redirect_entry *entry = &ioapic->redirtbl[irq];
 
-	kvm_for_each_vcpu(i, vcpu, ioapic->kvm) {
+	plane_for_each_vcpu(i, vcpu, ioapic_plane(ioapic)) {
 		if (!kvm_apic_match_dest(vcpu, NULL, APIC_DEST_NOSHORT,
 					 entry->fields.dest_id,
 					 entry->fields.dest_mode) ||
@@ -262,6 +270,9 @@ void kvm_ioapic_scan_entry(struct kvm_vcpu *vcpu, ulong *ioapic_handled_vectors)
 	struct rtc_status *status = &ioapic->rtc_status;
 	union kvm_ioapic_redirect_entry *e;
 	int index;
+
+	if (vcpu->plane_level != READ_ONCE(ioapic->plane_level))
+		return;
 
 	spin_lock(&ioapic->lock);
 
@@ -429,7 +440,7 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 			irq.dest_id = e->fields.dest_id;
 			irq.msi_redir_hint = false;
 			bitmap_zero(vcpu_bitmap, KVM_MAX_VCPUS);
-			kvm_bitmap_or_dest_vcpus(ioapic->kvm->planes[0], &irq,
+			kvm_bitmap_or_dest_vcpus(ioapic_plane(ioapic), &irq,
 						 vcpu_bitmap);
 			if (old_dest_mode != e->fields.dest_mode ||
 			    old_dest_id != e->fields.dest_id) {
@@ -442,7 +453,7 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 				irq.dest_mode =
 				    kvm_lapic_irq_dest_mode(
 					!!old_dest_mode);
-				kvm_bitmap_or_dest_vcpus(ioapic->kvm->planes[0], &irq,
+				kvm_bitmap_or_dest_vcpus(ioapic_plane(ioapic), &irq,
 							 vcpu_bitmap);
 			}
 			kvm_make_scan_ioapic_request_mask(ioapic->kvm,
@@ -485,11 +496,11 @@ static int ioapic_service(struct kvm_ioapic *ioapic, int irq, bool line_status)
 		 * if rtc_irq_check_coalesced returns false).
 		 */
 		WARN_ON_ONCE(ioapic->rtc_status.pending_eoi);
-		ret = __kvm_irq_delivery_to_apic(ioapic->kvm->planes[0], NULL, &irqe,
+		ret = __kvm_irq_delivery_to_apic(ioapic_plane(ioapic), NULL, &irqe,
 						 &ioapic->rtc_status);
 		ioapic->rtc_status.pending_eoi = (ret < 0 ? 0 : ret);
 	} else
-		ret = kvm_irq_delivery_to_apic(ioapic->kvm->planes[0], NULL, &irqe);
+		ret = kvm_irq_delivery_to_apic(ioapic_plane(ioapic), NULL, &irqe);
 
 	if (ret && irqe.trig_mode == IOAPIC_LEVEL_TRIG)
 		entry->fields.remote_irr = 1;
@@ -587,6 +598,9 @@ void kvm_ioapic_update_eoi(struct kvm_vcpu *vcpu, int vector, int trigger_mode)
 {
 	int i;
 	struct kvm_ioapic *ioapic = vcpu->kvm->arch.vioapic;
+
+	if (vcpu->plane_level != READ_ONCE(ioapic->plane_level))
+		return;
 
 	spin_lock(&ioapic->lock);
 	rtc_irq_eoi(ioapic, vcpu, vector);

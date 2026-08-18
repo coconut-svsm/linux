@@ -80,7 +80,7 @@ int kvm_cpu_has_extint(struct kvm_vcpu *v)
 
 #ifdef CONFIG_KVM_IOAPIC
 	if (pic_in_kernel(v->kvm))
-		return v->kvm->arch.vpic->output;
+		return kvm_pic_in_plane(v) ? v->kvm->arch.vpic->output : 0;
 #endif
 
 	WARN_ON_ONCE(!irqchip_split(v->kvm));
@@ -142,7 +142,7 @@ int kvm_cpu_get_extint(struct kvm_vcpu *v)
 
 #ifdef CONFIG_KVM_IOAPIC
 	if (pic_in_kernel(v->kvm))
-		return kvm_pic_read_irq(v->kvm); /* PIC */
+		return kvm_pic_in_plane(v) ? kvm_pic_read_irq(v->kvm) : -1;
 #endif
 
 	WARN_ON_ONCE(!irqchip_split(v->kvm));

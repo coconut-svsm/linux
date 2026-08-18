@@ -61,7 +61,9 @@ static void pic_unlock(struct kvm_pic *s)
 	spin_unlock(&s->lock);
 
 	if (wakeup) {
-		kvm_for_each_vcpu(i, vcpu, s->kvm) {
+		struct kvm_plane *plane = kvm_legacy_irqchip_plane(s->kvm);
+
+		plane_for_each_vcpu(i, vcpu, plane) {
 			if (kvm_apic_accept_pic_intr(vcpu)) {
 				kvm_make_request(KVM_REQ_EVENT, vcpu);
 				kvm_vcpu_kick(vcpu);
@@ -285,7 +287,8 @@ static void kvm_pic_reset(struct kvm_kpic_state *s)
 	}
 	s->init_state = 1;
 
-	kvm_for_each_vcpu(i, vcpu, s->pics_state->kvm)
+	plane_for_each_vcpu(i, vcpu,
+			    kvm_legacy_irqchip_plane(s->pics_state->kvm))
 		if (kvm_apic_accept_pic_intr(vcpu)) {
 			found = true;
 			break;
