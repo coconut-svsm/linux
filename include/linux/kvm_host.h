@@ -2405,7 +2405,7 @@ static inline bool kvm_notify_irqfd_resampler(struct kvm *kvm,
 }
 #endif /* CONFIG_HAVE_KVM_IRQCHIP */
 
-void kvm_arch_irq_routing_update(struct kvm *kvm);
+void kvm_arch_irq_routing_update(struct kvm *kvm, unsigned int plane_level);
 
 static inline void __kvm_make_request(int req, struct kvm_vcpu *vcpu)
 {

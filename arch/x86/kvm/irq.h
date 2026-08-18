@@ -50,6 +50,8 @@ struct kvm_kpic_state {
 
 struct kvm_pic {
 	spinlock_t lock;
+	/* Routing configuration, not part of struct kvm_pic_state. */
+	unsigned int plane_level;
 	bool wakeup_needed;
 	unsigned pending_acks;
 	struct kvm *kvm;
@@ -92,6 +94,24 @@ static inline int pic_in_kernel(struct kvm *kvm)
 {
 	return irqchip_full(kvm);
 }
+
+#ifdef CONFIG_KVM_IOAPIC
+static inline bool kvm_pic_in_plane(struct kvm_vcpu *vcpu)
+{
+	return pic_in_kernel(vcpu->kvm) &&
+	       READ_ONCE(vcpu->kvm->arch.vpic->plane_level) == vcpu->plane_level;
+}
+
+static inline struct kvm_plane *kvm_legacy_irqchip_plane(struct kvm *kvm)
+{
+	return kvm->planes[READ_ONCE(kvm->arch.vpic->plane_level)];
+}
+#else
+static inline bool kvm_pic_in_plane(struct kvm_vcpu *vcpu)
+{
+	return false;
+}
+#endif
 
 
 static inline int irqchip_split(struct kvm *kvm)

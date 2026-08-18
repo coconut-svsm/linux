@@ -75,6 +75,8 @@ struct kvm_ioapic {
 	u32 irr;
 	u32 pad;
 	union kvm_ioapic_redirect_entry redirtbl[IOAPIC_NUM_PINS];
+	/* Routing configuration, not part of struct kvm_ioapic_state. */
+	unsigned int plane_level;
 	unsigned long irq_states[IOAPIC_NUM_PINS];
 	struct kvm_io_device dev;
 	struct kvm *kvm;

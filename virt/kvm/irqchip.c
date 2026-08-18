@@ -159,7 +159,8 @@ static int setup_routing_entry(struct kvm *kvm,
 	return 0;
 }
 
-void __attribute__((weak)) kvm_arch_irq_routing_update(struct kvm *kvm)
+void __weak kvm_arch_irq_routing_update(struct kvm *kvm,
+					unsigned int plane_level)
 {
 }
 
@@ -223,7 +224,7 @@ int kvm_set_irq_routing(struct kvm *kvm,
 	old = rcu_dereference_protected(kvm->irq_routing, 1);
 	rcu_assign_pointer(kvm->irq_routing, new);
 	kvm_irq_routing_update(kvm);
-	kvm_arch_irq_routing_update(kvm);
+	kvm_arch_irq_routing_update(kvm, plane_level);
 	mutex_unlock(&kvm->irq_lock);
 
 	synchronize_srcu_expedited(&kvm->irq_srcu);

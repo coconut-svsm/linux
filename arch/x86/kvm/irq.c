@@ -416,13 +416,28 @@ void kvm_scan_ioapic_routes(struct kvm_vcpu *vcpu,
 	srcu_read_unlock(&kvm->irq_srcu, idx);
 }
 
-void kvm_arch_irq_routing_update(struct kvm *kvm)
+void kvm_arch_irq_routing_update(struct kvm *kvm, unsigned int plane_level)
 {
 #ifdef CONFIG_KVM_HYPERV
 	kvm_hv_irq_routing_update(kvm);
 #endif
 
-	if (irqchip_split(kvm))
+#ifdef CONFIG_KVM_IOAPIC
+	if (irqchip_full(kvm)) {
+		struct kvm_ioapic *ioapic = kvm->arch.vioapic;
+		struct kvm_pic *pic = kvm->arch.vpic;
+
+		spin_lock(&pic->lock);
+		WRITE_ONCE(pic->plane_level, plane_level);
+		spin_unlock(&pic->lock);
+
+		spin_lock(&ioapic->lock);
+		WRITE_ONCE(ioapic->plane_level, plane_level);
+		spin_unlock(&ioapic->lock);
+	}
+#endif
+
+	if (irqchip_in_kernel(kvm))
 		kvm_make_scan_ioapic_request(kvm);
 }
 
