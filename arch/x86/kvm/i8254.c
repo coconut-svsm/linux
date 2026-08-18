@@ -221,7 +221,8 @@ void __kvm_migrate_pit_timer(struct kvm_vcpu *vcpu)
 	struct hrtimer *timer;
 
 	/* Somewhat arbitrarily make vcpu0 the owner of the PIT. */
-	if (vcpu->vcpu_id || !pit)
+	if (vcpu->vcpu_id || !pit ||
+	    vcpu->plane_level != kvm_legacy_irqchip_plane(vcpu->kvm)->level)
 		return;
 
 	timer = &pit->pit_state.timer;
@@ -241,6 +242,7 @@ static void pit_do_work(struct kthread_work *work)
 {
 	struct kvm_pit *pit = container_of(work, struct kvm_pit, expired);
 	struct kvm *kvm = pit->kvm;
+	struct kvm_plane *plane = kvm_legacy_irqchip_plane(kvm);
 	struct kvm_vcpu *vcpu;
 	unsigned long i;
 	struct kvm_kpit_state *ps = &pit->pit_state;
@@ -260,8 +262,8 @@ static void pit_do_work(struct kthread_work *work)
 	 * VCPUs and only when LVT0 is in NMI mode.  The interrupt can
 	 * also be simultaneously delivered through PIC and IOAPIC.
 	 */
-	if (atomic_read(&kvm->planes[0]->arch.vapics_in_nmi_mode) > 0)
-		kvm_for_each_vcpu(i, vcpu, kvm)
+	if (atomic_read(&plane->arch.vapics_in_nmi_mode) > 0)
+		plane_for_each_vcpu(i, vcpu, plane)
 			kvm_apic_nmi_wd_deliver(vcpu);
 }
 
