@@ -39,6 +39,17 @@ kvm_arch_irqfd_allowed(struct kvm *kvm, struct kvm_irqfd *args)
 	return true;
 }
 
+static void irqfd_get_irq_entry(struct kvm_kernel_irqfd *irqfd,
+				struct kvm_kernel_irq_routing_entry *entry)
+{
+	unsigned int seq;
+
+	do {
+		seq = read_seqcount_begin(&irqfd->irq_entry_sc);
+		*entry = irqfd->irq_entry;
+	} while (read_seqcount_retry(&irqfd->irq_entry_sc, seq));
+}
+
 static void
 irqfd_inject(struct work_struct *work)
 {
@@ -47,10 +58,17 @@ irqfd_inject(struct work_struct *work)
 	struct kvm *kvm = irqfd->kvm;
 
 	if (!irqfd->resampler) {
-		kvm_set_irq(kvm, KVM_USERSPACE_IRQ_SOURCE_ID, irqfd->gsi, 1,
-				false);
-		kvm_set_irq(kvm, KVM_USERSPACE_IRQ_SOURCE_ID, irqfd->gsi, 0,
-				false);
+		struct kvm_kernel_irq_routing_entry irq;
+
+		irqfd_get_irq_entry(irqfd, &irq);
+		if (irq.type == KVM_IRQ_ROUTING_MSI) {
+			irq.set(&irq, kvm, KVM_USERSPACE_IRQ_SOURCE_ID, 1, false);
+		} else {
+			kvm_set_irq(kvm, KVM_USERSPACE_IRQ_SOURCE_ID,
+				    irqfd->gsi, 1, false);
+			kvm_set_irq(kvm, KVM_USERSPACE_IRQ_SOURCE_ID,
+				    irqfd->gsi, 0, false);
+		}
 	} else
 		kvm_set_irq(kvm, KVM_IRQFD_RESAMPLE_IRQ_SOURCE_ID,
 			    irqfd->gsi, 1, false);
@@ -207,7 +225,6 @@ irqfd_wakeup(wait_queue_entry_t *wait, unsigned mode, int sync, void *key)
 	__poll_t flags = key_to_poll(key);
 	struct kvm_kernel_irq_routing_entry irq;
 	struct kvm *kvm = irqfd->kvm;
-	unsigned seq;
 	int idx;
 	int ret = 0;
 
@@ -221,10 +238,7 @@ irqfd_wakeup(wait_queue_entry_t *wait, unsigned mode, int sync, void *key)
 		eventfd_ctx_do_read(irqfd->eventfd, &cnt);
 
 		idx = srcu_read_lock(&kvm->irq_srcu);
-		do {
-			seq = read_seqcount_begin(&irqfd->irq_entry_sc);
-			irq = irqfd->irq_entry;
-		} while (read_seqcount_retry(&irqfd->irq_entry_sc, seq));
+		irqfd_get_irq_entry(irqfd, &irq);
 
 		/*
 		 * An event has been signaled, inject an interrupt unless the
@@ -283,10 +297,13 @@ static void irqfd_update(struct kvm *kvm, struct kvm_kernel_irqfd *irqfd)
 	write_seqcount_begin(&irqfd->irq_entry_sc);
 
 	e = entries;
-	if (n_entries == 1)
+	if (n_entries == 1) {
 		irqfd->irq_entry = *e;
-	else
+		if (e->type == KVM_IRQ_ROUTING_MSI)
+			irqfd->irq_entry.plane_level = irqfd->plane_level;
+	} else {
 		irqfd->irq_entry.type = 0;
+	}
 
 	write_seqcount_end(&irqfd->irq_entry_sc);
 }
@@ -367,8 +384,8 @@ void __weak kvm_arch_update_irqfd_routing(struct kvm_kernel_irqfd *irqfd,
 }
 #endif
 
-static int
-kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
+static int kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args,
+			    unsigned int plane_level)
 {
 	struct kvm_kernel_irqfd *irqfd;
 	struct eventfd_ctx *eventfd = NULL, *resamplefd = NULL;
@@ -388,6 +405,7 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 		return -ENOMEM;
 
 	irqfd->kvm = kvm;
+	irqfd->plane_level = plane_level;
 	irqfd->gsi = args->gsi;
 	INIT_LIST_HEAD(&irqfd->list);
 	INIT_WORK(&irqfd->inject, irqfd_inject);
@@ -586,8 +604,8 @@ void kvm_unregister_irq_ack_notifier(struct kvm *kvm,
 /*
  * shutdown any irqfd's that match fd+gsi
  */
-static int
-kvm_irqfd_deassign(struct kvm *kvm, struct kvm_irqfd *args)
+static int kvm_irqfd_deassign(struct kvm *kvm, struct kvm_irqfd *args,
+			      unsigned int plane_level)
 {
 	struct kvm_kernel_irqfd *irqfd, *tmp;
 	struct eventfd_ctx *eventfd;
@@ -599,7 +617,8 @@ kvm_irqfd_deassign(struct kvm *kvm, struct kvm_irqfd *args)
 	spin_lock_irq(&kvm->irqfds.lock);
 
 	list_for_each_entry_safe(irqfd, tmp, &kvm->irqfds.items, list) {
-		if (irqfd->eventfd == eventfd && irqfd->gsi == args->gsi)
+		if (irqfd->eventfd == eventfd && irqfd->gsi == args->gsi &&
+		    irqfd->plane_level == plane_level)
 			irqfd_deactivate(irqfd);
 	}
 
@@ -616,16 +635,16 @@ kvm_irqfd_deassign(struct kvm *kvm, struct kvm_irqfd *args)
 	return 0;
 }
 
-int
-kvm_irqfd(struct kvm *kvm, struct kvm_irqfd *args)
+int kvm_irqfd(struct kvm *kvm, struct kvm_irqfd *args,
+	      unsigned int plane_level)
 {
 	if (args->flags & ~(KVM_IRQFD_FLAG_DEASSIGN | KVM_IRQFD_FLAG_RESAMPLE))
 		return -EINVAL;
 
 	if (args->flags & KVM_IRQFD_FLAG_DEASSIGN)
-		return kvm_irqfd_deassign(kvm, args);
+		return kvm_irqfd_deassign(kvm, args, plane_level);
 
-	return kvm_irqfd_assign(kvm, args);
+	return kvm_irqfd_assign(kvm, args, plane_level);
 }
 
 /*

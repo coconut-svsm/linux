@@ -4907,6 +4907,15 @@ static long __kvm_plane_ioctl(struct kvm_plane *plane, unsigned int ioctl, unsig
 	case KVM_CREATE_VCPU:
 		r = kvm_plane_ioctl_create_vcpu(plane, arg);
 		break;
+	case KVM_IRQFD: {
+		void __user *argp = (void __user *)arg;
+		struct kvm_irqfd data;
+
+		if (copy_from_user(&data, argp, sizeof(data)))
+			return -EFAULT;
+		r = kvm_irqfd(plane->kvm, &data, plane->level);
+		break;
+	}
 #ifdef CONFIG_HAVE_KVM_MSI
 	case KVM_SIGNAL_MSI: {
 		void __user *argp = (void __user *)arg;
@@ -5533,6 +5542,7 @@ static long kvm_vm_ioctl(struct file *filp,
 		r = kvm_vm_ioctl_create_plane(kvm, arg);
 		break;
 	case KVM_CREATE_VCPU:
+	case KVM_IRQFD:
 #ifdef CONFIG_HAVE_KVM_MSI
 	case KVM_SIGNAL_MSI:
 #endif
@@ -5625,15 +5635,6 @@ static long kvm_vm_ioctl(struct file *filp,
 		break;
 	}
 #endif
-	case KVM_IRQFD: {
-		struct kvm_irqfd data;
-
-		r = -EFAULT;
-		if (copy_from_user(&data, argp, sizeof(data)))
-			goto out;
-		r = kvm_irqfd(kvm, &data);
-		break;
-	}
 	case KVM_IOEVENTFD: {
 		struct kvm_ioeventfd data;
 

@@ -2381,14 +2381,16 @@ void kvm_eventfd_init(struct kvm *kvm);
 int kvm_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args);
 
 #ifdef CONFIG_HAVE_KVM_IRQCHIP
-int kvm_irqfd(struct kvm *kvm, struct kvm_irqfd *args);
+int kvm_irqfd(struct kvm *kvm, struct kvm_irqfd *args,
+	      unsigned int plane_level);
 void kvm_irqfd_release(struct kvm *kvm);
 bool kvm_notify_irqfd_resampler(struct kvm *kvm,
 				unsigned int irqchip,
 				unsigned int pin);
 void kvm_irq_routing_update(struct kvm *);
 #else
-static inline int kvm_irqfd(struct kvm *kvm, struct kvm_irqfd *args)
+static inline int kvm_irqfd(struct kvm *kvm, struct kvm_irqfd *args,
+			    unsigned int plane_level)
 {
 	return -EINVAL;
 }
