@@ -4029,15 +4029,56 @@ static int snp_begin_psc(struct vcpu_svm *svm)
 }
 
 /*
+ * Install a guest-owned VMSA.  The caller must serialize against AP creation
+ * and destruction with snp_vmsa_mutex.
+ */
+static int sev_snp_install_guest_vmsa(struct vcpu_svm *svm, gpa_t gpa)
+{
+	struct kvm *kvm = svm->vcpu.kvm;
+	struct kvm_memory_slot *slot;
+	struct page *page;
+	kvm_pfn_t pfn;
+	gfn_t gfn;
+	int idx;
+	int ret;
+
+	lockdep_assert_held(&svm->sev_es.snp_vmsa_mutex);
+
+	gfn = gpa_to_gfn(gpa);
+	idx = srcu_read_lock(&kvm->srcu);
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!slot) {
+		ret = -EINVAL;
+		goto out_unlock;
+	}
+
+	/* Guest-owned VMSAs are backed by guest_memfd private memory. */
+	ret = kvm_gmem_get_pfn(kvm, slot, gfn, &pfn, &page, NULL);
+	if (ret)
+		goto out_unlock;
+
+	/*
+	 * Keep the initial KVM allocation until teardown so its existing
+	 * cache-flush and cleanup path remains intact.
+	 */
+	svm->sev_es.snp_has_guest_vmsa = true;
+	svm->sev_es.snp_guest_vmsa_gpa = gpa;
+	svm->vmcb->control.vmsa_pa = pfn_to_hpa(pfn);
+
+	/* guest_memfd pages are currently non-migratable, so the PFN is stable. */
+	kvm_release_page_clean(page);
+out_unlock:
+	srcu_read_unlock(&kvm->srcu, idx);
+	return ret;
+}
+
+/*
  * Invoked as part of svm_vcpu_reset() processing of an init event.
  */
 static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	struct kvm_memory_slot *slot;
-	struct page *page;
-	kvm_pfn_t pfn;
-	gfn_t gfn;
+	gpa_t gpa;
 
 	guard(mutex)(&svm->sev_es.snp_vmsa_mutex);
 
@@ -4052,6 +4093,7 @@ static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 
 	/* Clear use of the VMSA */
 	svm->vmcb->control.vmsa_pa = INVALID_PAGE;
+	svm->sev_es.snp_guest_vmsa_gpa = INVALID_PAGE;
 
 	/*
 	 * When replacing the VMSA during SEV-SNP AP creation,
@@ -4062,33 +4104,10 @@ static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 	if (!VALID_PAGE(svm->sev_es.snp_vmsa_gpa))
 		return;
 
-	gfn = gpa_to_gfn(svm->sev_es.snp_vmsa_gpa);
+	gpa = svm->sev_es.snp_vmsa_gpa;
 	svm->sev_es.snp_vmsa_gpa = INVALID_PAGE;
-
-	slot = gfn_to_memslot(vcpu->kvm, gfn);
-	if (!slot)
+	if (sev_snp_install_guest_vmsa(svm, gpa))
 		return;
-
-	/*
-	 * The new VMSA will be private memory guest memory, so retrieve the
-	 * PFN from the gmem backend.
-	 */
-	if (kvm_gmem_get_pfn(vcpu->kvm, slot, gfn, &pfn, &page, NULL))
-		return;
-
-	/*
-	 * From this point forward, the VMSA will always be a guest-mapped page
-	 * rather than the initial one allocated by KVM in svm->sev_es.vmsa. In
-	 * theory, svm->sev_es.vmsa could be free'd and cleaned up here, but
-	 * that involves cleanups like flushing caches, which would ideally be
-	 * handled during teardown rather than guest boot.  Deferring that also
-	 * allows the existing logic for SEV-ES VMSAs to be re-used with
-	 * minimal SNP-specific changes.
-	 */
-	svm->sev_es.snp_has_guest_vmsa = true;
-
-	/* Use the new VMSA */
-	svm->vmcb->control.vmsa_pa = pfn_to_hpa(pfn);
 
 	/*
 	 * The vCPU may not have gone through the LAUNCH_UPDATE process, so mark
@@ -4110,13 +4129,6 @@ static void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu)
 	} else {
 		kvm_set_mp_state(vcpu, KVM_MP_STATE_UNINITIALIZED);
 	}
-
-	/*
-	 * gmem pages aren't currently migratable, but if this ever changes
-	 * then care should be taken to ensure svm->sev_es.vmsa is pinned
-	 * through some other means.
-	 */
-	kvm_release_page_clean(page);
 }
 
 static unsigned int get_ap_creation_request(struct vcpu_svm *svm)
@@ -5151,6 +5163,7 @@ int sev_vcpu_create(struct kvm_vcpu *vcpu)
 	struct page *vmsa_page;
 
 	mutex_init(&svm->sev_es.snp_vmsa_mutex);
+	svm->sev_es.snp_guest_vmsa_gpa = INVALID_PAGE;
 
 	if (!is_sev_es_guest(vcpu))
 		return 0;
