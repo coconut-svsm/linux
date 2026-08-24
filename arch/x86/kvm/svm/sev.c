@@ -2513,11 +2513,27 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	return 0;
 }
 
+static bool sev_snp_direct_vmsa_enabled(struct kvm *kvm)
+{
+	struct kvm_vcpu *vcpu;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		if (to_svm(vcpu)->sev_es.snp_has_guest_vmsa)
+			return true;
+	}
+
+	return false;
+}
+
+static int sev_snp_install_guest_vmsa(struct vcpu_svm *svm, gpa_t gpa);
+
 static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
 	struct kvm_sev_info *sev = to_kvm_sev_info(kvm);
 	struct sev_data_snp_launch_update data = {};
 	struct kvm_vcpu *vcpu;
+	bool direct_vmsa;
 	unsigned long i;
 	int ret;
 
@@ -2528,12 +2544,22 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (ret)
 		return ret;
 
+	/* Decide the launch model before changing the state of any vCPU. */
+	direct_vmsa = sev_snp_direct_vmsa_enabled(kvm);
+	sev->snp_direct_vmsa = direct_vmsa;
+
 	data.gctx_paddr = __psp_pa(sev->snp_context);
 	data.page_type = SNP_PAGE_TYPE_VMSA;
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		struct vcpu_svm *svm = to_svm(vcpu);
 		u64 pfn = __pa(svm->sev_es.vmsa) >> PAGE_SHIFT;
+
+		if (direct_vmsa) {
+			if (!svm->sev_es.snp_has_guest_vmsa)
+				svm->vmcb->control.vmsa_pa = INVALID_PAGE;
+			goto protect_vcpu;
+		}
 
 		ret = sev_es_sync_vmsa(svm);
 		if (ret)
@@ -2554,6 +2580,7 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 			goto out;
 		}
 
+protect_vcpu:
 		svm->vcpu.arch.guest_state_protected = true;
 		/*
 		 * SEV-ES (and thus SNP) guest mandates LBR Virtualization to
@@ -2568,6 +2595,87 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 out:
 	kvm_unlock_all_vcpus(kvm);
 	return ret;
+}
+
+static int snp_get_vcpu_state(struct kvm_vcpu *vcpu,
+			      struct kvm_sev_cmd *argp)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_sev_snp_vcpu_state state = {};
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+	if (!to_kvm_sev_info(kvm)->snp_context)
+		return -EINVAL;
+
+	guard(mutex)(&svm->sev_es.snp_vmsa_mutex);
+
+	if (VALID_PAGE(svm->sev_es.snp_guest_vmsa_gpa) &&
+	    VALID_PAGE(svm->vmcb->control.vmsa_pa)) {
+		state.vmsa_gpa = svm->sev_es.snp_guest_vmsa_gpa;
+		state.valid_fields |= KVM_SEV_SNP_VCPU_STATE_VMSA_VALID;
+	}
+
+	if (VALID_PAGE(svm->vmcb->control.ghcb_gpa)) {
+		state.ghcb_gpa = svm->vmcb->control.ghcb_gpa;
+		state.valid_fields |= KVM_SEV_SNP_VCPU_STATE_GHCB_VALID;
+	}
+
+	if (copy_to_user(u64_to_user_ptr(argp->data), &state, sizeof(state)))
+		return -EFAULT;
+
+	return 0;
+}
+
+static int snp_set_vcpu_state(struct kvm_vcpu *vcpu,
+			      struct kvm_sev_cmd *argp)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_sev_info *sev = to_kvm_sev_info(kvm);
+	struct kvm_sev_snp_vcpu_state state;
+	int ret;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+	if (!sev->snp_context || kvm->arch.pre_fault_allowed)
+		return -EINVAL;
+
+	if (copy_from_user(&state, u64_to_user_ptr(argp->data), sizeof(state)))
+		return -EFAULT;
+
+	if (memchr_inv(state.pad, 0, sizeof(state.pad)) ||
+	    state.valid_fields & ~(KVM_SEV_SNP_VCPU_STATE_VMSA_VALID |
+				   KVM_SEV_SNP_VCPU_STATE_GHCB_VALID))
+		return -EINVAL;
+
+	if (state.valid_fields & KVM_SEV_SNP_VCPU_STATE_VMSA_VALID) {
+		if (!PAGE_ALIGNED(state.vmsa_gpa) ||
+		    !page_address_valid(vcpu, state.vmsa_gpa) ||
+		    IS_ALIGNED(state.vmsa_gpa, PMD_SIZE))
+			return -EINVAL;
+	}
+
+	guard(mutex)(&svm->sev_es.snp_vmsa_mutex);
+
+	if (state.valid_fields & KVM_SEV_SNP_VCPU_STATE_VMSA_VALID) {
+		ret = sev_snp_install_guest_vmsa(svm, state.vmsa_gpa);
+		if (ret)
+			return ret;
+	} else {
+		svm->sev_es.snp_has_guest_vmsa = true;
+		svm->sev_es.snp_guest_vmsa_gpa = INVALID_PAGE;
+		svm->vmcb->control.vmsa_pa = INVALID_PAGE;
+	}
+
+	if (state.valid_fields & KVM_SEV_SNP_VCPU_STATE_GHCB_VALID)
+		svm->vmcb->control.ghcb_gpa = state.ghcb_gpa;
+	else
+		svm->vmcb->control.ghcb_gpa = INVALID_PAGE;
+
+	vmcb_mark_all_dirty(svm->vmcb);
+	return 0;
 }
 
 static int snp_launch_finish(struct kvm *kvm, struct kvm_sev_cmd *argp)
@@ -2764,6 +2872,36 @@ int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 		r = -EFAULT;
 
 	return r;
+}
+
+int sev_vcpu_mem_enc_ioctl(struct kvm_vcpu *vcpu, void __user *argp)
+{
+	struct kvm_sev_cmd sev_cmd;
+	int ret;
+
+	if (!sev_enabled)
+		return -ENOTTY;
+	if (!argp)
+		return -EINVAL;
+	if (copy_from_user(&sev_cmd, argp, sizeof(sev_cmd)))
+		return -EFAULT;
+	guard(mutex)(&vcpu->kvm->lock);
+
+	switch (sev_cmd.id) {
+	case KVM_SEV_SNP_GET_VCPU_STATE:
+		ret = snp_get_vcpu_state(vcpu, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_SET_VCPU_STATE:
+		ret = snp_set_vcpu_state(vcpu, &sev_cmd);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (copy_to_user(argp, &sev_cmd, sizeof(sev_cmd)))
+		return -EFAULT;
+
+	return ret;
 }
 
 int sev_mem_enc_register_region(struct kvm *kvm,
@@ -3581,7 +3719,8 @@ void sev_free_vcpu(struct kvm_vcpu *vcpu)
 	 * a guest-owned page. Transition the page to hypervisor state before
 	 * releasing it back to the system.
 	 */
-	if (is_sev_snp_guest(vcpu)) {
+	if (is_sev_snp_guest(vcpu) &&
+	    !to_kvm_sev_info(vcpu->kvm)->snp_direct_vmsa) {
 		u64 pfn = __pa(svm->sev_es.vmsa) >> PAGE_SHIFT;
 
 		if (kvm_rmp_make_shared(vcpu->kvm, pfn, PG_LEVEL_4K))
@@ -5094,7 +5233,8 @@ static void sev_es_init_vmcb(struct vcpu_svm *svm, bool init_event)
 	 * the VMSA will be NULL if this vCPU is the destination for intrahost
 	 * migration, and will be copied later.
 	 */
-	if (!svm->sev_es.snp_has_guest_vmsa) {
+	if (!svm->sev_es.snp_has_guest_vmsa &&
+	    !(is_sev_snp_guest(&svm->vcpu) && sev->snp_direct_vmsa)) {
 		if (svm->sev_es.vmsa)
 			svm->vmcb->control.vmsa_pa = __pa(svm->sev_es.vmsa);
 		else

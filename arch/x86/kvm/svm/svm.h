@@ -126,6 +126,7 @@ struct kvm_sev_info {
 	struct mutex guest_req_mutex; /* Must acquire before using bounce buffers */
 	cpumask_var_t have_run_cpus; /* CPUs that have done VMRUN for this VM. */
 	bool snp_certs_enabled;	/* SNP certificate-fetching support. */
+	bool snp_direct_vmsa;	/* All launch VMSAs are owned by userspace. */
 };
 #endif
 
@@ -1009,6 +1010,7 @@ void sev_es_unmap_ghcb(struct vcpu_svm *svm);
 
 #ifdef CONFIG_KVM_AMD_SEV
 int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp);
+int sev_vcpu_mem_enc_ioctl(struct kvm_vcpu *vcpu, void __user *argp);
 int sev_mem_enc_register_region(struct kvm *kvm,
 				struct kvm_enc_region *range);
 int sev_mem_enc_unregister_region(struct kvm *kvm,
