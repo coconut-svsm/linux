@@ -2337,6 +2337,7 @@ struct sev_gmem_populate_args {
 	__u8 type;
 	int sev_fd;
 	int fw_error;
+	bool vmsa_invalid;
 };
 
 static int sev_gmem_post_populate(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
@@ -2344,6 +2345,7 @@ static int sev_gmem_post_populate(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
 {
 	struct sev_gmem_populate_args *sev_populate_args = opaque;
 	struct sev_data_snp_launch_update fw_args = {0};
+	struct kvm_sev_info_plane *sev_plane = to_kvm_sev_info_plane(kvm->planes[0]);
 	struct kvm_sev_info *sev = to_kvm_sev_info(kvm);
 	bool assigned = false;
 	int level;
@@ -2363,11 +2365,20 @@ static int sev_gmem_post_populate(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
 	if (src_page) {
 		void *src_vaddr = kmap_local_page(src_page);
 		void *dst_vaddr = kmap_local_pfn(pfn);
+		struct sev_es_save_area *vmsa = dst_vaddr;
 
 		memcpy(dst_vaddr, src_vaddr, PAGE_SIZE);
+		if (sev_populate_args->type == KVM_SEV_SNP_PAGE_TYPE_VMSA &&
+		    (vmsa->vmpl || vmsa->sev_features != sev_plane->vmsa_features)) {
+			sev_populate_args->vmsa_invalid = true;
+			ret = -EINVAL;
+		}
 
 		kunmap_local(dst_vaddr);
 		kunmap_local(src_vaddr);
+
+		if (ret)
+			goto out;
 	}
 
 	ret = rmp_make_private(pfn, gfn << PAGE_SHIFT, PG_LEVEL_4K,
@@ -2433,7 +2444,10 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		 params.gfn_start, params.len, params.type, params.flags);
 
 	if (!params.len || !PAGE_ALIGNED(params.len) || params.flags ||
+	    (params.type == KVM_SEV_SNP_PAGE_TYPE_VMSA &&
+	     params.len != PAGE_SIZE) ||
 	    (params.type != KVM_SEV_SNP_PAGE_TYPE_NORMAL &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_VMSA &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_ZERO &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_UNMEASURED &&
 	     params.type != KVM_SEV_SNP_PAGE_TYPE_SECRETS &&
@@ -2479,6 +2493,9 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 				  params.type == KVM_SEV_SNP_PAGE_TYPE_CPUID,
 				  sev_gmem_post_populate, &sev_populate_args);
 	if (count < 0) {
+		if (sev_populate_args.vmsa_invalid)
+			return -EINVAL;
+
 		argp->error = sev_populate_args.fw_error;
 		pr_debug("%s: kvm_gmem_populate failed, ret %ld (fw_error %d)\n",
 			 __func__, count, argp->error);

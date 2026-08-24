@@ -536,6 +536,7 @@ Returns: 0 on success, < 0 on error, -EAGAIN if caller should retry
 where the allowed values for page_type are #define'd as::
 
         KVM_SEV_SNP_PAGE_TYPE_NORMAL
+        KVM_SEV_SNP_PAGE_TYPE_VMSA
         KVM_SEV_SNP_PAGE_TYPE_ZERO
         KVM_SEV_SNP_PAGE_TYPE_UNMEASURED
         KVM_SEV_SNP_PAGE_TYPE_SECRETS
@@ -543,6 +544,14 @@ where the allowed values for page_type are #define'd as::
 
 See the SEV-SNP spec [snp-fw-abi]_ for further details on how each page type is
 used/measured.
+
+``KVM_SEV_SNP_PAGE_TYPE_VMSA`` creates VMSA pages as part of the measured
+initial image.  A request must contain exactly one 4 KiB VMSA page, but the
+command may be used multiple times.  Creating a VMSA page does not associate it
+with a vCPU; use ``KVM_SEV_SNP_SET_VMSA`` on the intended vCPU file descriptor
+before launch finish to make that association.  KVM treats the VMSA contents
+as guest-owned data, but requires VMPL 0 and a ``sev_features`` value that
+matches the VM's configured VMSA features.
 
 20. KVM_SEV_SNP_LAUNCH_FINISH
 -----------------------------
