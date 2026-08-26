@@ -364,6 +364,15 @@ $(TEST_GEN_PROGS): $(LIBKVM_OBJS)
 $(TEST_GEN_PROGS_EXTENDED): $(LIBKVM_OBJS)
 $(TEST_GEN_OBJ): $(GEN_HDRS)
 
+# Print the compiled tests, one absolute path per line.  Keep this separate
+# from lib.mk's emit_tests target, which also emits non-compiled test scripts.
+emit_test_binaries:
+	@for TEST in $(TEST_GEN_PROGS); do \
+		echo "$$TEST"; \
+	done
+
+.PHONY: emit_test_binaries
+
 cscope: include_paths = $(LINUX_TOOL_INCLUDE) $(LINUX_HDR_PATH) include lib ..
 cscope:
 	$(RM) cscope.*
