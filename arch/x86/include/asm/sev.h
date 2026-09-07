@@ -435,6 +435,11 @@ struct svsm_call {
 #define SVSM_VTPM_QUERY			0
 #define SVSM_VTPM_CMD			1
 
+#define SVSM_OCP_CALL(x) ((5ULL << 32) | (x))
+#define SVSM_OCP_LIST 0
+#define SVSM_OCP_READ 1
+#define SVSM_OCP_WRITE 2
+
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 
 extern u8 snp_vmpl;
@@ -528,6 +533,12 @@ void snp_msg_free(struct snp_msg_desc *mdesc);
 int snp_send_guest_request(struct snp_msg_desc *mdesc, struct snp_guest_req *req);
 
 int snp_svsm_vtpm_send_command(u8 *buffer);
+int snp_svsm_ocp_list_sources(u8 *bytes_buffer, u8 *name_buffer, u32 buf_size,
+			      u32 *bytes_returned, u32 *buf_size_required);
+int snp_svsm_ocp_read_source(u8 *buffer, u8 *name_buffer, u32 bytes_to_read,
+			     u32 offset, u32 *bytes_read);
+int snp_svsm_ocp_write_source(u8 *buffer, u8 *name_buffer, u32 bytes_to_write,
+			      u32 offset, u32 *bytes_written);
 
 void __init snp_secure_tsc_prepare(void);
 void __init snp_secure_tsc_init(void);
@@ -636,6 +647,24 @@ static inline void snp_msg_free(struct snp_msg_desc *mdesc) { }
 static inline int snp_send_guest_request(struct snp_msg_desc *mdesc,
 					 struct snp_guest_req *req) { return -ENODEV; }
 static inline int snp_svsm_vtpm_send_command(u8 *buffer) { return -ENODEV; }
+static inline int snp_svsm_ocp_list_sources(u8 *bytes_buffer, u8 *name_buffer,
+					    u32 buf_size, u32 *bytes_returned,
+					    u32 *buf_size_required)
+{
+	return -ENODEV;
+}
+static int snp_svsm_ocp_read_source(u8 *buffer, u8 *name_buffer,
+				    u32 bytes_to_read, u32 offset,
+				    u32 *bytes_read)
+{
+	return -ENODEV;
+}
+static int snp_svsm_ocp_write_source(u8 *buffer, u8 *name_buffer,
+				     u32 bytes_to_write, u32 offset,
+				     u32 *bytes_written)
+{
+	return -ENODEV;
+}
 static inline void __init snp_secure_tsc_prepare(void) { }
 static inline void __init snp_secure_tsc_init(void) { }
 static inline void sev_evict_cache(void *va, int npages) {}

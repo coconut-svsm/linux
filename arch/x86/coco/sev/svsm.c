@@ -360,3 +360,72 @@ bool snp_svsm_vtpm_probe(void)
 	/* Check platform commands contains TPM_SEND_COMMAND - platform command 8 */
 	return call.rcx_out & BIT_ULL(8);
 }
+
+int snp_svsm_ocp_list_sources(u8 *bytes_buffer, u8 *name_buffer, u32 buf_size,
+			      u32 *bytes_returned, u32 *buf_size_required)
+{
+	struct svsm_call call = {};
+	int ret;
+
+	call.caa = svsm_get_caa();
+	call.rax = SVSM_OCP_CALL(SVSM_OCP_LIST);
+	call.rcx = name_buffer ? __pa(name_buffer) : 0;
+	call.rdx = __pa(bytes_buffer);
+	call.r8 = buf_size;
+
+	ret = svsm_perform_call_protocol(&call);
+
+	if (ret < 0)
+		return ret;
+
+	*bytes_returned = call.r8_out;
+	*buf_size_required = call.r9_out;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snp_svsm_ocp_list_sources);
+
+int snp_svsm_ocp_read_source(u8 *buffer, u8 *name_buffer, u32 bytes_to_read,
+			     u32 offset, u32 *bytes_read)
+{
+	struct svsm_call call = {};
+	int ret;
+
+	call.caa = svsm_get_caa();
+	call.rax = SVSM_OCP_CALL(SVSM_OCP_READ);
+	call.rcx = __pa(name_buffer);
+	call.rdx = __pa(buffer);
+	call.r8 = bytes_to_read;
+	call.r9 = offset;
+
+	ret = svsm_perform_call_protocol(&call);
+
+	if (ret < 0)
+		return ret;
+
+	*bytes_read = call.r8_out;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snp_svsm_ocp_read_source);
+
+int snp_svsm_ocp_write_source(u8 *buffer, u8 *name_buffer, u32 bytes_to_write,
+			      u32 offset, u32 *bytes_written)
+{
+	struct svsm_call call = {};
+	int ret;
+
+	call.caa = svsm_get_caa();
+	call.rax = SVSM_OCP_CALL(SVSM_OCP_WRITE);
+	call.rcx = __pa(name_buffer);
+	call.rdx = __pa(buffer);
+	call.r8 = bytes_to_write;
+	call.r9 = offset;
+
+	ret = svsm_perform_call_protocol(&call);
+
+	if (ret < 0)
+		return ret;
+
+	*bytes_written = call.r8_out;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snp_svsm_ocp_write_source);

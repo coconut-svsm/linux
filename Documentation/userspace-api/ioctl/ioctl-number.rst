@@ -412,4 +412,5 @@ Code  Seq#    Include File                                             Comments
                                                                        <mailto:naveenkrishna.chatradhi@amd.com>
 0xFD  all    linux/dm-ioctl.h
 0xFE  all    linux/isst_if.h
+0xFF  00-0F  uapi/linux/ocp_svsm.h
 ====  =====  ========================================================= ================================================================

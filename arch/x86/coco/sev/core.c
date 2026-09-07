@@ -1395,6 +1395,11 @@ static struct platform_device tpm_svsm_device = {
 	.id		= -1,
 };
 
+static struct platform_device ocp_svsm_device = {
+	.name		= "ocp-svsm",
+	.id		= -1,
+};
+
 static int __init snp_init_platform_device(void)
 {
 	if (!cc_platform_has(CC_ATTR_GUEST_SEV_SNP))
@@ -1405,6 +1410,10 @@ static int __init snp_init_platform_device(void)
 
 	if (snp_svsm_vtpm_probe() &&
 	    platform_device_register(&tpm_svsm_device))
+		return -ENODEV;
+
+	// TODO: add probe like above
+	if (platform_device_register(&ocp_svsm_device))
 		return -ENODEV;
 
 	pr_info("SNP guest platform devices initialized.\n");
