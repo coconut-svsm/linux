@@ -2606,7 +2606,7 @@ static int snp_get_vcpu_state(struct kvm_vcpu *vcpu,
 
 	if (!sev_snp_guest(kvm))
 		return -ENOTTY;
-	if (!to_kvm_sev_info(kvm)->snp_context)
+	if (!READ_ONCE(to_kvm_sev_info(kvm)->snp_context))
 		return -EINVAL;
 
 	guard(mutex)(&svm->sev_es.snp_vmsa_mutex);
@@ -2639,7 +2639,8 @@ static int snp_set_vcpu_state(struct kvm_vcpu *vcpu,
 
 	if (!sev_snp_guest(kvm))
 		return -ENOTTY;
-	if (!sev->snp_context || kvm->arch.pre_fault_allowed)
+	if (!READ_ONCE(sev->snp_context) || kvm->arch.pre_fault_allowed ||
+	    vcpu->arch.guest_state_protected)
 		return -EINVAL;
 
 	if (copy_from_user(&state, u64_to_user_ptr(argp->data), sizeof(state)))
@@ -2885,7 +2886,6 @@ int sev_vcpu_mem_enc_ioctl(struct kvm_vcpu *vcpu, void __user *argp)
 		return -EINVAL;
 	if (copy_from_user(&sev_cmd, argp, sizeof(sev_cmd)))
 		return -EFAULT;
-	guard(mutex)(&vcpu->kvm->lock);
 
 	switch (sev_cmd.id) {
 	case KVM_SEV_SNP_GET_VCPU_STATE:
